@@ -1,0 +1,13 @@
+expname = scannet_scene0_origin
+basedir = ./logs
+datadir = ./data/scannet_scene0_origin
+dataset_type = blender
+
+use_viewdirs = True
+
+N_samples = 64
+N_importance = 128
+N_rand = 1024
+
+
+half_res = True
