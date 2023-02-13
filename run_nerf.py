@@ -379,7 +379,10 @@ def render_rays(ray_batch,
         z_vals = lower + (upper - lower) * t_rand
 
     pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples, 3]
-
+    # print(pts[:, :, 0].min(), pts[:, :, 0].max()) # scene: -1, -3, 2, lego: -1, 1 -1, 1 -2, 2
+    # print(pts[:, :, 1].min(), pts[:, :, 1].max()) # scene: -1, -3, 2, lego: -1, 1 -1, 1 -2, 2
+    # print(pts[:, :, 2].min(), pts[:, :, 2].max()) # scene: -1, -3, 2, lego: -1, 1 -1, 1 -2, 2
+    # input()
 
 #     raw = run_network(pts)
     raw = network_query_fn(pts, viewdirs, network_fn)
@@ -531,13 +534,12 @@ def config_parser():
     # experiments
     parser.add_argument("--near", type=float, default=None)
     parser.add_argument("--far", type=float, default=None)
-
+    parser.add_argument("--scene_scale", type=float, default=None)
 
     return parser
 
 
 def train():
-
     parser = config_parser()
     args = parser.parse_args()
 
@@ -572,7 +574,7 @@ def train():
         print('NEAR FAR', near, far)
 
     elif args.dataset_type == 'blender':
-        images, poses, render_poses, hwf, i_split = load_blender_data(args.datadir, args.half_res, args.testskip)
+        images, poses, render_poses, hwf, i_split = load_blender_data(args, args.datadir, args.half_res, args.testskip)
         print('Loaded blender', images.shape, render_poses.shape, hwf, args.datadir)
         i_train, i_val, i_test = i_split
 
@@ -582,7 +584,7 @@ def train():
         else:
             near = 2.
             far = 6.
-
+            
         if args.white_bkgd:
             images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
         else:
@@ -640,7 +642,8 @@ def train():
         for arg in sorted(vars(args)):
             attr = getattr(args, arg)
             file.write('{} = {}\n'.format(arg, attr))
-    if args.config is not None:
+    
+    if args.config is not None:   
         f = os.path.join(basedir, expname, 'config.txt')
         with open(f, 'w') as file:
             file.write(open(args.config, 'r').read())
