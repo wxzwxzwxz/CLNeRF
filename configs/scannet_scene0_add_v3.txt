@@ -20,5 +20,5 @@ precrop_iters = 500
 precrop_frac = 0.5
 
 half_res = True
-near = 3
-far = 5
+near = 5
+far = 12
