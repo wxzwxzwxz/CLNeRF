@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, cv2
 import numpy as np
 import imageio
 import json
@@ -69,6 +69,7 @@ def batchify_rays(rays_flat, chunk=1024*32, **kwargs):
 def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
                   near=0., far=1.,
                   use_viewdirs=False, c2w_staticcam=None,
+                  use_mask_nerf=False, render_kwargs_test_mask=None,
                   **kwargs):
     """Render rays
     Args:
@@ -124,6 +125,12 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
 
     # Render and reshape
     all_ret = batchify_rays(rays, chunk, **kwargs)
+    
+    if use_mask_nerf == True:
+        all_ret_mask = batchify_rays(rays, chunk, **render_kwargs_test_mask)
+        print('use mask nerf')
+        input()
+
     for k in all_ret:
         k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
         all_ret[k] = torch.reshape(all_ret[k], k_sh)
@@ -182,6 +189,8 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
                     filename = os.path.join(savedir, output_paths[i].split('/')[-1])
                 else:
                     filename = os.path.join(savedir, '{:04d}.png'.format(i))
+                cur_h, cur_w = rgb8.shape[:2]
+                rgb8 = cv2.resize(rgb8, (int(cur_w*2), int(cur_h*2)))
             else:
                 filename = os.path.join(savedir, '{:05d}.jpg'.format(i))
             imageio.imwrite(filename, rgb8)
@@ -276,6 +285,94 @@ def create_nerf(args):
 
     return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer
 
+def create_mask_nerf(args):
+    """Instantiate NeRF's MLP model.
+    """
+    embed_fn, input_ch = get_embedder(args.multires, args.i_embed)
+
+    input_ch_views = 0
+    embeddirs_fn = None
+    if args.use_viewdirs:
+        embeddirs_fn, input_ch_views = get_embedder(args.multires_views, args.i_embed)
+    
+    # output_ch = 5 if args.N_importance > 0 else 4
+    output_ch = 4
+    skips = [4]
+    # model = NeRF(D=args.netdepth, W=args.netwidth,
+    #              input_ch=input_ch, output_ch=output_ch, skips=skips,
+    #              input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+    model = NeRF(D=args.netdepth_mask, W=args.netwidth_mask,
+                 input_ch=input_ch, output_ch=output_ch, skips=skips,
+                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+    grad_vars = list(model.parameters())
+
+    model_fine = None
+    # if args.N_importance > 0:
+    #     model_fine = NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
+    #                       input_ch=input_ch, output_ch=output_ch, skips=skips,
+    #                       input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+    #     grad_vars += list(model_fine.parameters())
+
+    network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
+                                                                embed_fn=embed_fn,
+                                                                embeddirs_fn=embeddirs_fn,
+                                                                netchunk=args.netchunk)
+
+    # Create optimizer
+    # optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
+
+    # start = 0s
+    basedir = args.basedir
+    expname = args.expname
+
+    ##########################
+
+    # Load checkpoints
+    if args.ft_path is not None and args.ft_path!='None':
+        ckpts = [args.ft_path]
+    else:
+        ckpts = [os.path.join(basedir, expname, f) for f in sorted(os.listdir(os.path.join(basedir, expname))) if '_mask.tar' in f]
+
+    print('Found ckpts', ckpts)
+    if len(ckpts) > 0 and not args.no_reload:
+        ckpt_path = ckpts[-1]
+        print('Reloading from', ckpt_path)
+        ckpt = torch.load(ckpt_path)
+
+        # start = ckpt['global_step']
+        # optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+
+        # Load model
+        model.load_state_dict(ckpt['network_fn_state_dict'])
+        if model_fine is not None:
+            model_fine.load_state_dict(ckpt['network_fine_state_dict'])
+
+    ##########################
+
+    render_kwargs_train = {
+        'network_query_fn' : network_query_fn,
+        'perturb' : args.perturb,
+        'N_importance' : 0, # args.N_importance,
+        'network_fine' : model_fine,
+        'N_samples' : args.N_samples,
+        'network_fn' : model,
+        'use_viewdirs' : args.use_viewdirs,
+        'white_bkgd' : args.white_bkgd,
+        'raw_noise_std' : args.raw_noise_std,
+    }
+
+    # NDC only good for LLFF-style forward facing data
+    if args.dataset_type != 'llff' or args.no_ndc:
+        print('Not ndc!')
+        render_kwargs_train['ndc'] = False
+        render_kwargs_train['lindisp'] = args.lindisp
+
+    render_kwargs_test = {k : render_kwargs_train[k] for k in render_kwargs_train}
+    render_kwargs_test['perturb'] = False
+    render_kwargs_test['raw_noise_std'] = 0.
+
+    # return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer
+    return render_kwargs_test
 
 def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False):
     """Transforms model's predictions to semantically meaningful values.
@@ -461,6 +558,10 @@ def config_parser():
                         help='layers in fine network')
     parser.add_argument("--netwidth_fine", type=int, default=256, 
                         help='channels per layer in fine network')
+    parser.add_argument("--netdepth_mask", type=int, default=8, 
+                        help='layers in network')
+    parser.add_argument("--netwidth_mask", type=int, default=128, 
+                        help='channels per layer')
     parser.add_argument("--N_rand", type=int, default=32*32*4, 
                         help='batch size (number of random rays per gradient step)')
     parser.add_argument("--lrate", type=float, default=5e-4, 
@@ -554,6 +655,7 @@ def config_parser():
     parser.add_argument("--near", type=float, default=None)
     parser.add_argument("--far", type=float, default=None)
     parser.add_argument("--scene_scale", type=float, default=None)
+    parser.add_argument("--use_mask_nerf", action='store_true')
 
     return parser
 
@@ -679,6 +781,13 @@ def train():
     render_kwargs_train.update(bds_dict)
     render_kwargs_test.update(bds_dict)
 
+    # Create mask nerf model
+    if args.use_mask_nerf:
+        render_kwargs_test_mask = create_mask_nerf(args)
+        render_kwargs_test_mask.update(bds_dict)
+    else:
+        render_kwargs_test_mask = None
+
     # Move testing data to GPU
     render_poses = torch.Tensor(render_poses).to(device)
 
@@ -791,6 +900,8 @@ def train():
         #####  Core optimization loop  #####
         rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                 verbose=i < 10, retraw=True,
+                                                use_mask_nerf=args.use_mask_nerf,
+                                                render_kwargs_test_mask=render_kwargs_test_mask,
                                                 **render_kwargs_train)
 
         optimizer.zero_grad()
