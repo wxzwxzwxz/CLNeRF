@@ -134,7 +134,7 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
     return ret_list + [ret_dict]
 
 
-def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0):
+def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0, render_mask_only=False, output_paths=None):
 
     H, W, focal = hwf
 
@@ -152,7 +152,19 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
         print(i, time.time() - t)
         t = time.time()
         rgb, disp, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs)
-        rgbs.append(rgb.cpu().numpy())
+        rgb = rgb.cpu().numpy()
+
+        if gt_imgs is not None:
+            error_map = np.abs(rgb-gt_imgs[i])
+            error_mask = np.mean(error_map, 2) > 0.1
+            error_mask = np.stack([error_mask]*3, -1)
+
+            if render_mask_only:
+                rgb = error_mask
+            else:
+                rgb = np.concatenate([rgb, gt_imgs[i], error_map, error_mask], 1)
+            
+        rgbs.append(rgb)
         disps.append(disp.cpu().numpy())
         if i==0:
             print(rgb.shape, disp.shape)
@@ -165,7 +177,13 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
 
         if savedir is not None:
             rgb8 = to8b(rgbs[-1])
-            filename = os.path.join(savedir, '{:03d}.png'.format(i))
+            if render_mask_only:
+                if output_paths is not None:
+                    filename = os.path.join(savedir, output_paths[i].split('/')[-1])
+                else:
+                    filename = os.path.join(savedir, '{:04d}.png'.format(i))
+            else:
+                filename = os.path.join(savedir, '{:05d}.jpg'.format(i))
             imageio.imwrite(filename, rgb8)
 
 
@@ -482,6 +500,7 @@ def config_parser():
                         help='do not optimize, reload weights and render out render_poses path')
     parser.add_argument("--render_test", action='store_true', 
                         help='render the test set instead of render_poses path')
+    parser.add_argument("--render_mask_only", action='store_true')
     parser.add_argument("--render_factor", type=int, default=0, 
                         help='downsampling factor to speed up rendering, set 4 or 8 for fast preview')
 
@@ -528,7 +547,7 @@ def config_parser():
                         help='frequency of weight ckpt saving')
     parser.add_argument("--i_testset", type=int, default=50000, 
                         help='frequency of testset saving')
-    parser.add_argument("--i_video",   type=int, default=50000, 
+    parser.add_argument("--i_video",   type=int, default=200000, 
                         help='frequency of render_poses video saving')
     
     # experiments
@@ -574,7 +593,7 @@ def train():
         print('NEAR FAR', near, far)
 
     elif args.dataset_type == 'blender':
-        images, poses, render_poses, hwf, i_split = load_blender_data(args, args.datadir, args.half_res, args.testskip)
+        images, poses, render_poses, hwf, i_split, output_paths = load_blender_data(args, args.datadir, args.half_res, args.testskip)
         print('Loaded blender', images.shape, render_poses.shape, hwf, args.datadir)
         i_train, i_val, i_test = i_split
 
@@ -632,6 +651,7 @@ def train():
 
     if args.render_test:
         render_poses = np.array(poses[i_test])
+        output_paths = output_paths[i_test]
 
     # Create log dir and copy the config file
     basedir = args.basedir
@@ -677,9 +697,9 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', render_poses.shape)
 
-            rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
+            rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor, render_mask_only=args.render_mask_only, output_paths=output_paths)
             print('Done rendering', testsavedir)
-            imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
+            # imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
 
             return
 

@@ -62,9 +62,9 @@ N = 256
 # t = np.linspace(-1.2, 1.2, N+1)
 # t = np.linspace(-2, 2, N+1)
 
-x = np.linspace(-1.0, 1.0, N+1)
-y = np.linspace(-1.0, 1.0, N+1)
-z = np.linspace(-0.5, 0.5, N+1)
+x = np.linspace(-3, 1, N+1)
+y = np.linspace(-2, 2, N+1)
+z = np.linspace(0, 2, N+1)
 
 # x = np.linspace(-1.5, 0.1, N+1)
 # y = np.linspace(-3, -1, N+1)
