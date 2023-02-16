@@ -237,3 +237,46 @@ def sample_pdf(bins, weights, N_samples, det=False, pytest=False):
     samples = bins_g[...,0] + t * (bins_g[...,1]-bins_g[...,0])
 
     return samples
+
+def sample_rays(args, hwf, K, i, i_train, poses, start, use_batching=False):
+    N_rand = args.N_rand
+
+    H, W, focal = hwf
+    H, W = int(H), int(W)
+    hwf = [H, W, focal]
+
+    # Sample random ray batch
+    if use_batching:
+        pass
+    else:
+        # Random from one image
+        img_i = np.random.choice(i_train)
+        # target = images[img_i]
+        # target = torch.Tensor(target).to(device)
+        pose = poses[img_i, :3,:4]
+
+        if N_rand is not None:
+            rays_o, rays_d = get_rays(H, W, K, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+
+            if i < args.precrop_iters:
+                dH = int(H//2 * args.precrop_frac)
+                dW = int(W//2 * args.precrop_frac)
+                coords = torch.stack(
+                    torch.meshgrid(
+                        torch.linspace(H//2 - dH, H//2 + dH - 1, 2*dH), 
+                        torch.linspace(W//2 - dW, W//2 + dW - 1, 2*dW)
+                    ), -1)
+                if i == start:
+                    print(f"[Config] Center cropping of size {2*dH} x {2*dW} is enabled until iter {args.precrop_iters}")                
+            else:
+                coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
+
+            coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
+            select_inds = np.random.choice(coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
+            select_coords = coords[select_inds].long()  # (N_rand, 2)
+            rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            batch_rays = torch.stack([rays_o, rays_d], 0)
+            # target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+
+    return batch_rays

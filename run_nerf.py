@@ -69,7 +69,6 @@ def batchify_rays(rays_flat, chunk=1024*32, **kwargs):
 def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
                   near=0., far=1.,
                   use_viewdirs=False, c2w_staticcam=None,
-                  use_mask_nerf=False, render_kwargs_test_mask=None,
                   **kwargs):
     """Render rays
     Args:
@@ -125,15 +124,21 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
 
     # Render and reshape
     all_ret = batchify_rays(rays, chunk, **kwargs)
-    
-    if use_mask_nerf == True:
-        all_ret_mask = batchify_rays(rays, chunk, **render_kwargs_test_mask)
-        print('use mask nerf')
-        input()
 
     for k in all_ret:
         k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
         all_ret[k] = torch.reshape(all_ret[k], k_sh)
+    
+    # if use_mask_nerf == True:
+    #     # rgb * mask, depth * mask, acc * mask
+    #     all_ret_mask = batchify_rays(rays, chunk, **render_kwargs_test_mask)
+    #     for k in all_ret_mask:
+    #         k_sh = list(sh[:-1]) + list(all_ret_mask[k].shape[1:])
+    #         all_ret_mask[k] = torch.reshape(all_ret_mask[k], k_sh)
+    #         print(k, all_ret_mask[k].shape, all_ret[k].shape)
+
+    #     print('use mask nerf')
+    #     input()
 
     k_extract = ['rgb_map', 'disp_map', 'acc_map']
     ret_list = [all_ret[k] for k in k_extract]
@@ -202,7 +207,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
     return rgbs, disps
 
 
-def create_nerf(args):
+def create_nerf(args, ckpt_path=None):
     """Instantiate NeRF's MLP model.
     """
     embed_fn, input_ch = get_embedder(args.multires, args.i_embed)
@@ -240,12 +245,14 @@ def create_nerf(args):
     ##########################
 
     # Load checkpoints
-    if args.ft_path is not None and args.ft_path!='None':
+    if ckpt_path is not None:
+        ckpts = [ckpt_path]
+    elif args.ft_path is not None and args.ft_path!='None':
         ckpts = [args.ft_path]
     else:
         ckpts = [os.path.join(basedir, expname, f) for f in sorted(os.listdir(os.path.join(basedir, expname))) if 'tar' in f]
 
-    print('Found ckpts', ckpts)
+    # print('Found ckpts', ckpts)
     if len(ckpts) > 0 and not args.no_reload:
         ckpt_path = ckpts[-1]
         print('Reloading from', ckpt_path)
@@ -285,7 +292,7 @@ def create_nerf(args):
 
     return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer
 
-def create_mask_nerf(args):
+def create_mask_nerf(args, ckpt_path):
     """Instantiate NeRF's MLP model.
     """
     embed_fn, input_ch = get_embedder(args.multires, args.i_embed)
@@ -321,19 +328,22 @@ def create_mask_nerf(args):
     # Create optimizer
     # optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
 
-    # start = 0s
+    # start = 0
     basedir = args.basedir
     expname = args.expname
 
     ##########################
 
     # Load checkpoints
-    if args.ft_path is not None and args.ft_path!='None':
-        ckpts = [args.ft_path]
-    else:
-        ckpts = [os.path.join(basedir, expname, f) for f in sorted(os.listdir(os.path.join(basedir, expname))) if '_mask.tar' in f]
+    ckpts = [ckpt_path]
+    # if ckpt_path is not None:
+    #     ckpts = [ckpt_path]
+    # elif args.ft_path is not None and args.ft_path!='None':
+    #     ckpts = [args.ft_path]
+    # else:
+    #     ckpts = [os.path.join(basedir, expname, f) for f in sorted(os.listdir(os.path.join(basedir, expname))) if '_mask.tar' in f]
 
-    print('Found ckpts', ckpts)
+    # print('Found ckpts', ckpts)
     if len(ckpts) > 0 and not args.no_reload:
         ckpt_path = ckpts[-1]
         print('Reloading from', ckpt_path)
@@ -356,9 +366,9 @@ def create_mask_nerf(args):
         'network_fine' : model_fine,
         'N_samples' : args.N_samples,
         'network_fn' : model,
-        'use_viewdirs' : args.use_viewdirs,
         'white_bkgd' : args.white_bkgd,
         'raw_noise_std' : args.raw_noise_std,
+        'use_viewdirs' : args.use_viewdirs,
     }
 
     # NDC only good for LLFF-style forward facing data
@@ -654,9 +664,15 @@ def config_parser():
     # experiments
     parser.add_argument("--near", type=float, default=None)
     parser.add_argument("--far", type=float, default=None)
+    parser.add_argument("--N_iters", type=int, default=200000)
     parser.add_argument("--scene_scale", type=float, default=None)
-    parser.add_argument("--use_mask_nerf", action='store_true')
-
+    parser.add_argument("--use_teacher_nerf", action='store_true')
+    parser.add_argument("--datadir_teacher", type=str, default='./data/llff/fern', 
+                        help='input data directory')
+    parser.add_argument("--ft_teacher_path", type=str, default=None, 
+                        help='specific weights npy file to reload for teacher network')
+    parser.add_argument("--ft_mask_path", type=str, default=None, 
+                        help='specific weights npy file to reload for mask network')
     return parser
 
 
@@ -695,7 +711,7 @@ def train():
         print('NEAR FAR', near, far)
 
     elif args.dataset_type == 'blender':
-        images, poses, render_poses, hwf, i_split, output_paths = load_blender_data(args, args.datadir, args.half_res, args.testskip)
+        images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W = load_blender_data(args, args.datadir, args.half_res, args.testskip)
         print('Loaded blender', images.shape, render_poses.shape, hwf, args.datadir)
         i_train, i_val, i_test = i_split
 
@@ -710,6 +726,23 @@ def train():
             images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
         else:
             images = images[...,:3]
+        
+        if args.use_teacher_nerf:
+            poses_teacher, render_poses_teacher, _, i_split_teacher, output_paths_teacher = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W)
+            print('Loaded blender for teacher', poses_teacher.shape, render_poses_teacher.shape, args.datadir_teacher)
+            i_train_teacher, i_val_teacher, i_test_teacher = i_split
+
+            # if args.near:
+            #     near = args.near
+            #     far = args.far
+            # else:
+            #     near = 2.
+            #     far = 6.
+                
+            # if args.white_bkgd:
+            #     images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
+            # else:
+            #     images = images[...,:3]
 
     elif args.dataset_type == 'LINEMOD':
         images, poses, render_poses, hwf, K, i_split, near, far = load_LINEMOD_data(args.datadir, args.half_res, args.testskip)
@@ -781,11 +814,14 @@ def train():
     render_kwargs_train.update(bds_dict)
     render_kwargs_test.update(bds_dict)
 
-    # Create mask nerf model
-    if args.use_mask_nerf:
-        render_kwargs_test_mask = create_mask_nerf(args)
+    # Create teacher nerf model
+    if args.use_teacher_nerf:
+        _, render_kwargs_test_teacher, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path)
+        render_kwargs_test_teacher.update(bds_dict)
+        render_kwargs_test_mask = create_mask_nerf(args, ckpt_path=args.ft_mask_path)
         render_kwargs_test_mask.update(bds_dict)
     else:
+        render_kwargs_test_teacher = None
         render_kwargs_test_mask = None
 
     # Move testing data to GPU
@@ -839,7 +875,8 @@ def train():
         rays_rgb = torch.Tensor(rays_rgb).to(device)
 
 
-    N_iters = 200000 + 1
+    # N_iters = 200000 + 1
+    N_iters = args.N_iters + 1
     print('Begin')
     print('TRAIN views are', i_train)
     print('TEST views are', i_test)
@@ -900,9 +937,8 @@ def train():
         #####  Core optimization loop  #####
         rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                 verbose=i < 10, retraw=True,
-                                                use_mask_nerf=args.use_mask_nerf,
-                                                render_kwargs_test_mask=render_kwargs_test_mask,
                                                 **render_kwargs_train)
+        
 
         optimizer.zero_grad()
         img_loss = img2mse(rgb, target_s)
@@ -914,6 +950,30 @@ def train():
             img_loss0 = img2mse(extras['rgb0'], target_s)
             loss = loss + img_loss0
             psnr0 = mse2psnr(img_loss0)
+
+        if args.use_teacher_nerf:
+            # randomly sample rays and genrate ground truth
+            batch_rays = sample_rays(args, hwf, K, i, i_train_teacher, poses_teacher, start)
+            
+            rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                        verbose=i < 10, retraw=True,
+                                                        **render_kwargs_train)
+                                                    
+            with torch.no_grad():
+                rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                        verbose=i < 10, retraw=True,
+                                                        **render_kwargs_test_teacher)
+                rgb_mask, disp_mask, acc_mask, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                        verbose=i < 10, retraw=True,
+                                                        **render_kwargs_test_mask)
+                rgb_gt = (1-rgb_mask) * rgb_teacher
+
+                img_loss_teacher = img2mse((1-rgb_mask) * rgb_student, rgb_gt)
+                loss += img_loss_teacher
+
+                if 'rgb0' in extras:
+                    img_loss0_teacher = img2mse((1-rgb_mask) * extras['rgb0'], rgb_gt)
+                    loss += img_loss0_teacher
 
         loss.backward()
         optimizer.step()
@@ -934,12 +994,19 @@ def train():
         # Rest is logging
         if i%args.i_weights==0:
             path = os.path.join(basedir, expname, '{:06d}.tar'.format(i))
-            torch.save({
-                'global_step': global_step,
-                'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
-                'network_fine_state_dict': render_kwargs_train['network_fine'].state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-            }, path)
+            if 'network_fine' in render_kwargs_train and render_kwargs_train['network_fine'] is not None:
+                torch.save({
+                    'global_step': global_step,
+                    'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
+                    'network_fine_state_dict': render_kwargs_train['network_fine'].state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, path)
+            else:
+                torch.save({
+                    'global_step': global_step,
+                    'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, path)
             print('Saved checkpoints at', path)
 
         if i%args.i_video==0 and i > 0:
