@@ -59,12 +59,10 @@ net_fn = render_kwargs_test['network_query_fn']
 #     plt.show()
 
 N = 256
-# t = np.linspace(-1.2, 1.2, N+1)
-# t = np.linspace(-2, 2, N+1)
-
 x = np.linspace(-3, 1, N+1)
-y = np.linspace(-2, 2, N+1)
-z = np.linspace(0, 2, N+1)
+y = np.linspace(-4, 0, N+1)
+z = np.linspace(-1, 3, N+1)
+
 
 # x = np.linspace(-1.5, 0.1, N+1)
 # y = np.linspace(-3, -1, N+1)
@@ -101,5 +99,5 @@ print('done', vertices.shape, triangles.shape)
 
 ## Uncomment to save out the mesh
 # mcubes.export_mesh(vertices, triangles, "logs/lego_example/lego_{}.dae".format(N), "lego")
-mcubes.export_mesh(vertices, triangles, os.path.join("logs", expname, "{}.dae".format(N)))
+# mcubes.export_mesh(vertices, triangles, os.path.join("logs", expname, "{}.dae".format(N)))
 mcubes.export_obj(vertices, triangles, os.path.join("logs", expname, "{}.obj".format(N)))

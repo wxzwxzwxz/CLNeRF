@@ -51,33 +51,24 @@ def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64):
     return outputs
 
 
-def batchify_rays(rays_flat, chunk=1024*32, use_point_mask=False, render_kwargs_test_teacher=None, render_kwargs_test_mask=None, **kwargs):
+def batchify_rays(rays_flat, chunk=1024*32, **kwargs):
     """Render rays in smaller minibatches to avoid OOM.
     """
     all_ret = {}
     for i in range(0, rays_flat.shape[0], chunk):
-        ret = render_rays(rays_flat[i:i+chunk], **kwargs, use_point_mask=use_point_mask, render_kwargs_test_teacher=render_kwargs_test_teacher, render_kwargs_test_mask=render_kwargs_test_mask)
+        ret = render_rays(rays_flat[i:i+chunk], **kwargs)
         for k in ret:
             if k not in all_ret:
                 all_ret[k] = []
             all_ret[k].append(ret[k])
 
-    # all_ret = {k : torch.cat(all_ret[k], 0) for k in all_ret}
-    for k in all_ret:
-        if 'point_error' in k:
-            pass
-        else:
-            all_ret[k] = torch.cat(all_ret[k], 0)
-
+    all_ret = {k : torch.cat(all_ret[k], 0) for k in all_ret}
     return all_ret
 
 
 def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
                   near=0., far=1.,
                   use_viewdirs=False, c2w_staticcam=None,
-                  use_point_mask=False,
-                  render_kwargs_test_teacher=None,
-                  render_kwargs_test_mask=None,
                   **kwargs):
     """Render rays
     Args:
@@ -132,14 +123,11 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
         rays = torch.cat([rays, viewdirs], -1)
 
     # Render and reshape
-    all_ret = batchify_rays(rays, chunk, **kwargs, use_point_mask=use_point_mask, render_kwargs_test_teacher=render_kwargs_test_teacher, render_kwargs_test_mask=render_kwargs_test_mask)
+    all_ret = batchify_rays(rays, chunk, **kwargs)
 
     for k in all_ret:
-        if 'point_error' in k:
-            pass 
-        else:
-            k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
-            all_ret[k] = torch.reshape(all_ret[k], k_sh)
+        k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
+        all_ret[k] = torch.reshape(all_ret[k], k_sh)
     
     # if use_mask_nerf == True:
     #     # rgb * mask, depth * mask, acc * mask
@@ -398,38 +386,6 @@ def create_mask_nerf(args, ckpt_path):
     # return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer
     return render_kwargs_test
 
-def raw2weights(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False):
-    raw2alpha = lambda raw, dists, act_fn=F.relu: 1.-torch.exp(-act_fn(raw)*dists)
-
-    dists = z_vals[...,1:] - z_vals[...,:-1]
-    dists = torch.cat([dists, torch.Tensor([1e10]).expand(dists[...,:1].shape)], -1)  # [N_rays, N_samples]
-
-    dists = dists * torch.norm(rays_d[...,None,:], dim=-1)
-
-    rgb = torch.sigmoid(raw[...,:3])  # [N_rays, N_samples, 3]
-    noise = 0.
-    if raw_noise_std > 0.:
-        noise = torch.randn(raw[...,3].shape) * raw_noise_std
-
-        # Overwrite randomly sampled data if pytest
-        if pytest:
-            np.random.seed(0)
-            noise = np.random.rand(*list(raw[...,3].shape)) * raw_noise_std
-            noise = torch.Tensor(noise)
-
-    alpha = raw2alpha(raw[...,3] + noise, dists)  # [N_rays, N_samples]
-    weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
-    # rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
-
-    # depth_map = torch.sum(weights * z_vals, -1)
-    # disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
-    # acc_map = torch.sum(weights, -1)
-
-    # if white_bkgd:
-    #     rgb_map = rgb_map + (1.-acc_map[...,None])
-
-    return rgb, alpha, weights
-
 def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False):
     """Transforms model's predictions to semantically meaningful values.
     Args:
@@ -488,11 +444,7 @@ def render_rays(ray_batch,
                 white_bkgd=False,
                 raw_noise_std=0.,
                 verbose=False,
-                pytest=False,
-                use_point_mask=False,
-                render_kwargs_test_teacher=None, 
-                render_kwargs_test_mask=None
-                ):
+                pytest=False):
     """Volumetric rendering.
     Args:
       ray_batch: array of shape [batch_size, ...]. All information necessary
@@ -561,22 +513,6 @@ def render_rays(ray_batch,
 
 #     raw = run_network(pts)
     raw = network_query_fn(pts, viewdirs, network_fn)
-    if use_point_mask:
-        with torch.no_grad():
-            raw_teacher = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fn'])
-            raw_mask = network_query_fn(pts, viewdirs, render_kwargs_test_mask['network_fn'])
-            
-            # generate mask
-            point_rgb, point_alpha, weights = raw2weights(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
-            mask = point_rgb * point_alpha.unsqueeze(-1)
-            mask = torch.mean(mask, -1)
-            mask = mask > 0.9
-            mask = mask.int()
-            mask = mask.unsqueeze(-1)
-        
-        point_error = torch.abs(raw_teacher * (1-mask) - raw * (1-mask))
-        point_error = torch.sum(point_error) / (torch.sum(1-mask)+1e-6)
-
     rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
     if N_importance > 0:
@@ -593,22 +529,6 @@ def render_rays(ray_batch,
         run_fn = network_fn if network_fine is None else network_fine
 #         raw = run_network(pts, fn=run_fn)
         raw = network_query_fn(pts, viewdirs, run_fn)
-        if use_point_mask:
-            point_error_0 = point_error
-            with torch.no_grad():
-                raw_teacher = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fine'])
-                raw_mask = network_query_fn(pts, viewdirs, render_kwargs_test_mask['network_fn'])
-                
-                # generate mask
-                point_rgb, point_alpha, weights = raw2weights(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
-                mask = point_rgb * point_alpha.unsqueeze(-1)
-                mask = torch.mean(mask, -1)
-                mask = mask > 0.9
-                mask = mask.int()
-                mask = mask.unsqueeze(-1)
-            
-            point_error = torch.abs(raw_teacher * (1-mask) - raw * (1-mask))
-            point_error = torch.sum(point_error) / (torch.sum(1-mask)+1e-6)
 
         rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
@@ -620,11 +540,6 @@ def render_rays(ray_batch,
         ret['disp0'] = disp_map_0
         ret['acc0'] = acc_map_0
         ret['z_std'] = torch.std(z_samples, dim=-1, unbiased=False)  # [N_rays]
-    
-    if use_point_mask:
-        ret['point_error'] = point_error
-        if N_importance > 0:
-            ret['point_error0'] = point_error_0
 
     for k in ret:
         if (torch.isnan(ret[k]).any() or torch.isinf(ret[k]).any()) and DEBUG:
@@ -754,7 +669,6 @@ def config_parser():
     parser.add_argument("--N_iters", type=int, default=200000)
     parser.add_argument("--scene_scale", type=float, default=None)
     parser.add_argument("--use_teacher_nerf", action='store_true')
-    parser.add_argument("--use_point_mask", action='store_true')
     parser.add_argument("--datadir_teacher", type=str, default='./data/llff/fern', 
                         help='input data directory')
     parser.add_argument("--ft_teacher_path", type=str, default=None, 
@@ -766,8 +680,6 @@ def config_parser():
     parser.add_argument("--render_wo_images", action='store_true')
     parser.add_argument("--ori_H", type=float, default=None)
     parser.add_argument("--ori_W", type=float, default=None)
-    parser.add_argument("--w_loss_teacher", type=float, default=1.0)
-    
                         
     return parser
 
@@ -1039,7 +951,7 @@ def train():
         rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                 verbose=i < 10, retraw=True,
                                                 **render_kwargs_train)
-    
+        
 
         optimizer.zero_grad()
         img_loss = img2mse(rgb, target_s)
@@ -1056,35 +968,25 @@ def train():
             # randomly sample rays and genrate ground truth
             batch_rays = sample_rays(args, hwf, K, i, i_train_teacher, args.N_rand_teacher, poses_teacher, start)
             
-            if args.use_point_mask:
-                rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+            rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                         verbose=i < 10, retraw=True,
-                                                        use_point_mask=args.use_point_mask,
-                                                        render_kwargs_test_teacher=render_kwargs_test_teacher,
-                                                        render_kwargs_test_mask=render_kwargs_test_mask,
                                                         **render_kwargs_train)
-                loss_teacher = extras_student['point_error'][0] + extras_student['point_error0'][0]
-                loss += loss_teacher * args.w_loss_teacher
-            else:
-                rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
-                                                            verbose=i < 10, retraw=True,
-                                                            **render_kwargs_train)
-                                                        
-                with torch.no_grad():
-                    rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
-                                                            verbose=i < 10, retraw=True,
-                                                            **render_kwargs_test_teacher)
-                    rgb_mask, disp_mask, acc_mask, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
-                                                            verbose=i < 10, retraw=True,
-                                                            **render_kwargs_test_mask)
-                    rgb_gt = (1-rgb_mask) * rgb_teacher
+                                                    
+            with torch.no_grad():
+                rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                        verbose=i < 10, retraw=True,
+                                                        **render_kwargs_test_teacher)
+                rgb_mask, disp_mask, acc_mask, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                        verbose=i < 10, retraw=True,
+                                                        **render_kwargs_test_mask)
+                rgb_gt = (1-rgb_mask) * rgb_teacher
 
                 img_loss_teacher = img2mse((1-rgb_mask) * rgb_student, rgb_gt)
-                loss += img_loss_teacher * args.w_loss_teacher
+                loss += img_loss_teacher
 
                 if 'rgb0' in extras:
                     img_loss0_teacher = img2mse((1-rgb_mask) * extras_student['rgb0'], rgb_gt)
-                    loss += img_loss0_teacher * args.w_loss_teacher
+                    loss += img_loss0_teacher
 
         loss.backward()
         optimizer.step()
