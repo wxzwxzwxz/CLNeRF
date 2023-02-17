@@ -238,8 +238,8 @@ def sample_pdf(bins, weights, N_samples, det=False, pytest=False):
 
     return samples
 
-def sample_rays(args, hwf, K, i, i_train, poses, start, use_batching=False):
-    N_rand = args.N_rand
+def sample_rays(args, hwf, K, i, i_train, N_rand, poses, start, use_batching=False):
+    # N_rand = args.N_rand
 
     H, W, focal = hwf
     H, W = int(H), int(W)

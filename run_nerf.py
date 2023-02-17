@@ -156,12 +156,14 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
         W = W//render_factor
         focal = focal/render_factor
 
+        K[:2, :] = K[:2, :]/render_factor
+
     rgbs = []
     disps = []
 
     t = time.time()
     for i, c2w in enumerate(tqdm(render_poses)):
-        print(i, time.time() - t)
+        # print(i, time.time() - t)
         t = time.time()
         rgb, disp, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs)
         rgb = rgb.cpu().numpy()
@@ -673,6 +675,12 @@ def config_parser():
                         help='specific weights npy file to reload for teacher network')
     parser.add_argument("--ft_mask_path", type=str, default=None, 
                         help='specific weights npy file to reload for mask network')
+    parser.add_argument("--N_rand_teacher", type=int, default=1024, 
+                        help='batch size (number of random rays per gradient step)')
+    parser.add_argument("--render_wo_images", action='store_true')
+    parser.add_argument("--ori_H", type=float, default=None)
+    parser.add_argument("--ori_W", type=float, default=None)
+                        
     return parser
 
 
@@ -711,8 +719,16 @@ def train():
         print('NEAR FAR', near, far)
 
     elif args.dataset_type == 'blender':
-        images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W = load_blender_data(args, args.datadir, args.half_res, args.testskip)
-        print('Loaded blender', images.shape, render_poses.shape, hwf, args.datadir)
+        if args.render_wo_images:
+            poses, render_poses, hwf, i_split, output_paths = load_blender_data(args, args.datadir, args.half_res, args.testskip, load_imgs=False, ori_H=args.ori_H, ori_W=args.ori_W)
+        else:
+            images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W = load_blender_data(args, args.datadir, args.half_res, args.testskip)
+            if args.white_bkgd:
+                images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
+            else:
+                images = images[...,:3]
+                
+        print('Loaded blender', poses.shape, render_poses.shape, hwf, args.datadir)
         i_train, i_val, i_test = i_split
 
         if args.near:
@@ -722,11 +738,6 @@ def train():
             near = 2.
             far = 6.
             
-        if args.white_bkgd:
-            images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
-        else:
-            images = images[...,:3]
-        
         if args.use_teacher_nerf:
             poses_teacher, render_poses_teacher, _, i_split_teacher, output_paths_teacher = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W)
             print('Loaded blender for teacher', poses_teacher.shape, render_poses_teacher.shape, args.datadir_teacher)
@@ -831,7 +842,9 @@ def train():
     if args.render_only:
         print('RENDER ONLY')
         with torch.no_grad():
-            if args.render_test:
+            if args.render_wo_images:
+                images = None
+            elif args.render_test:
                 # render_test switches to test poses
                 images = images[i_test]
             else:
@@ -953,7 +966,7 @@ def train():
 
         if args.use_teacher_nerf:
             # randomly sample rays and genrate ground truth
-            batch_rays = sample_rays(args, hwf, K, i, i_train_teacher, poses_teacher, start)
+            batch_rays = sample_rays(args, hwf, K, i, i_train_teacher, args.N_rand_teacher, poses_teacher, start)
             
             rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                         verbose=i < 10, retraw=True,

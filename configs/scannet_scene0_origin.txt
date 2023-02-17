@@ -11,3 +11,4 @@ N_rand = 1024
 
 
 half_res = True
+render_factor = 4

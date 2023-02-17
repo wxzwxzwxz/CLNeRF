@@ -20,5 +20,6 @@ precrop_iters = 500
 precrop_frac = 0.5
 
 half_res = True
+render_factor = 4
 near = 5
 far = 12
