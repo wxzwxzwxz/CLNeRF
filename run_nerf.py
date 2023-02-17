@@ -985,7 +985,7 @@ def train():
                 loss += img_loss_teacher
 
                 if 'rgb0' in extras:
-                    img_loss0_teacher = img2mse((1-rgb_mask) * extras['rgb0'], rgb_gt)
+                    img_loss0_teacher = img2mse((1-rgb_mask) * extras_student['rgb0'], rgb_gt)
                     loss += img_loss0_teacher
 
         loss.backward()
