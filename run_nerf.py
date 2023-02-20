@@ -51,12 +51,19 @@ def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64):
     return outputs
 
 
-def batchify_rays(rays_flat, chunk=1024*32, use_point_mask=False, render_kwargs_test_teacher=None, render_kwargs_test_mask=None, **kwargs):
+def batchify_rays(rays_flat, chunk=1024*32, use_point_mask=False, 
+                render_kwargs_test_teacher=None, 
+                render_kwargs_test_teacher_second=None, 
+                render_kwargs_test_mask=None, 
+                **kwargs):
     """Render rays in smaller minibatches to avoid OOM.
     """
     all_ret = {}
     for i in range(0, rays_flat.shape[0], chunk):
-        ret = render_rays(rays_flat[i:i+chunk], **kwargs, use_point_mask=use_point_mask, render_kwargs_test_teacher=render_kwargs_test_teacher, render_kwargs_test_mask=render_kwargs_test_mask)
+        ret = render_rays(rays_flat[i:i+chunk], **kwargs, use_point_mask=use_point_mask, 
+                        render_kwargs_test_teacher=render_kwargs_test_teacher, 
+                        render_kwargs_test_teacher_second=render_kwargs_test_teacher_second,
+                        render_kwargs_test_mask=render_kwargs_test_mask)
         for k in ret:
             if k not in all_ret:
                 all_ret[k] = []
@@ -77,6 +84,7 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
                   use_viewdirs=False, c2w_staticcam=None,
                   use_point_mask=False,
                   render_kwargs_test_teacher=None,
+                  render_kwargs_test_teacher_second=None,
                   render_kwargs_test_mask=None,
                   **kwargs):
     """Render rays
@@ -132,7 +140,10 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
         rays = torch.cat([rays, viewdirs], -1)
 
     # Render and reshape
-    all_ret = batchify_rays(rays, chunk, **kwargs, use_point_mask=use_point_mask, render_kwargs_test_teacher=render_kwargs_test_teacher, render_kwargs_test_mask=render_kwargs_test_mask)
+    all_ret = batchify_rays(rays, chunk, **kwargs, use_point_mask=use_point_mask, \
+                            render_kwargs_test_teacher=render_kwargs_test_teacher, \
+                            render_kwargs_test_teacher_second=render_kwargs_test_teacher_second, \
+                            render_kwargs_test_mask=render_kwargs_test_mask)
 
     for k in all_ret:
         if 'point_error' in k:
@@ -490,7 +501,8 @@ def render_rays(ray_batch,
                 verbose=False,
                 pytest=False,
                 use_point_mask=False,
-                render_kwargs_test_teacher=None, 
+                render_kwargs_test_teacher=None,
+                render_kwargs_test_teacher_second=None, 
                 render_kwargs_test_mask=None
                 ):
     """Volumetric rendering.
@@ -566,8 +578,11 @@ def render_rays(ray_batch,
             raw_teacher = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fn'])
             raw_mask = network_query_fn(pts, viewdirs, render_kwargs_test_mask['network_fn'])
             
+            if render_kwargs_test_teacher_second is not None:
+                raw_teacher_second = network_query_fn(pts, viewdirs, render_kwargs_test_teacher_second['network_fn'])
+
             # generate mask
-            point_rgb, point_alpha, weights = raw2weights(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
+            point_rgb, point_alpha, weights = raw2weights(raw_mask, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
             mask = point_rgb * point_alpha.unsqueeze(-1)
             mask = torch.mean(mask, -1)
             mask = mask > 0.9
@@ -576,6 +591,10 @@ def render_rays(ray_batch,
         
         point_error = torch.abs(raw_teacher * (1-mask) - raw * (1-mask))
         point_error = torch.sum(point_error) / (torch.sum(1-mask)+1e-6)
+
+        if render_kwargs_test_teacher_second is not None:
+            point_error_second = torch.abs(raw_teacher_second * (1-mask) - raw * (1-mask))
+            point_error_second = torch.sum(point_error_second) / (torch.sum(1-mask)+1e-6)
 
     rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
@@ -595,12 +614,18 @@ def render_rays(ray_batch,
         raw = network_query_fn(pts, viewdirs, run_fn)
         if use_point_mask:
             point_error_0 = point_error
+            if render_kwargs_test_teacher_second is not None:
+                point_error_0_second = point_error_second
+                
             with torch.no_grad():
                 raw_teacher = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fine'])
                 raw_mask = network_query_fn(pts, viewdirs, render_kwargs_test_mask['network_fn'])
                 
+                if render_kwargs_test_teacher_second is not None:
+                    raw_teacher_second = network_query_fn(pts, viewdirs, render_kwargs_test_teacher_second['network_fn'])
+
                 # generate mask
-                point_rgb, point_alpha, weights = raw2weights(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
+                point_rgb, point_alpha, weights = raw2weights(raw_mask, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
                 mask = point_rgb * point_alpha.unsqueeze(-1)
                 mask = torch.mean(mask, -1)
                 mask = mask > 0.9
@@ -609,6 +634,10 @@ def render_rays(ray_batch,
             
             point_error = torch.abs(raw_teacher * (1-mask) - raw * (1-mask))
             point_error = torch.sum(point_error) / (torch.sum(1-mask)+1e-6)
+
+            if render_kwargs_test_teacher_second is not None:
+                point_error_second = torch.abs(raw_teacher_second * (1-mask) - raw * (1-mask))
+                point_error_second = torch.sum(point_error_second) / (torch.sum(1-mask)+1e-6)
 
         rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
@@ -625,6 +654,11 @@ def render_rays(ray_batch,
         ret['point_error'] = point_error
         if N_importance > 0:
             ret['point_error0'] = point_error_0
+        
+        if render_kwargs_test_teacher_second is not None:
+            ret['point_error_second'] = point_error_second
+            if N_importance > 0:
+                ret['point_error0_second'] = point_error_0_second
 
     for k in ret:
         if (torch.isnan(ret[k]).any() or torch.isinf(ret[k]).any()) and DEBUG:
@@ -754,6 +788,7 @@ def config_parser():
     parser.add_argument("--N_iters", type=int, default=200000)
     parser.add_argument("--scene_scale", type=float, default=None)
     parser.add_argument("--use_teacher_nerf", action='store_true')
+    parser.add_argument("--use_teacher_nerf_second", action='store_true')
     parser.add_argument("--use_point_mask", action='store_true')
     parser.add_argument("--datadir_teacher", type=str, default='./data/llff/fern', 
                         help='input data directory')
@@ -827,9 +862,9 @@ def train():
             far = 6.
             
         if args.use_teacher_nerf:
-            poses_teacher, render_poses_teacher, _, i_split_teacher, output_paths_teacher = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W)
+            poses_teacher, render_poses_teacher, _, i_split_teacher, _ = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W)
             print('Loaded blender for teacher', poses_teacher.shape, render_poses_teacher.shape, args.datadir_teacher)
-            i_train_teacher, i_val_teacher, i_test_teacher = i_split
+            i_train_teacher, i_val_teacher, i_test_teacher = i_split_teacher
 
             # if args.near:
             #     near = args.near
@@ -842,6 +877,11 @@ def train():
             #     images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
             # else:
             #     images = images[...,:3]
+
+        if args.use_teacher_nerf_second:
+            poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _ = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W)
+            print('Loaded blender for second teacher', poses_teacher_second.shape, render_poses_teacher_second.shape, args.datadir_teacher_second)
+            i_train_teacher_second, _, _ = i_split_teacher_second
 
     elif args.dataset_type == 'LINEMOD':
         images, poses, render_poses, hwf, K, i_split, near, far = load_LINEMOD_data(args.datadir, args.half_res, args.testskip)
@@ -923,6 +963,12 @@ def train():
         render_kwargs_test_teacher = None
         render_kwargs_test_mask = None
 
+    if args.use_teacher_nerf_second:
+        _, render_kwargs_test_teacher_second, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path_second)
+        render_kwargs_test_teacher_second.update(bds_dict)
+    else:
+        render_kwargs_test_teacher_second = None
+    
     # Move testing data to GPU
     render_poses = torch.Tensor(render_poses).to(device)
 
@@ -1061,10 +1107,15 @@ def train():
                                                         verbose=i < 10, retraw=True,
                                                         use_point_mask=args.use_point_mask,
                                                         render_kwargs_test_teacher=render_kwargs_test_teacher,
+                                                        render_kwargs_test_teacher_second=render_kwargs_test_teacher_second,
                                                         render_kwargs_test_mask=render_kwargs_test_mask,
                                                         **render_kwargs_train)
                 loss_teacher = extras_student['point_error'][0] + extras_student['point_error0'][0]
                 loss += loss_teacher * args.w_loss_teacher
+
+                if args.use_teacher_nerf_second:
+                    loss_teacher_second = extras_student['point_error_second'][0] + extras_student['point_error0_second'][0]
+                    loss += loss_teacher_second * args.w_loss_teacher_second
             else:
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
