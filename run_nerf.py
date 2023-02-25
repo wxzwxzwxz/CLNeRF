@@ -215,6 +215,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
         if savedir is not None:
             rgb8 = to8b(rgbs[-1])
             if render_mask_only:
+                # TODO: check!!!
                 if output_paths is not None:
                     filename = os.path.join(savedir, output_paths[i].split('/')[-1])
                 else:
@@ -802,6 +803,7 @@ def config_parser():
     parser.add_argument("--ori_H", type=float, default=None)
     parser.add_argument("--ori_W", type=float, default=None)
     parser.add_argument("--w_loss_teacher", type=float, default=1.0)
+    parser.add_argument("--ext", type=str, default='.png')
     
                         
     return parser
@@ -843,9 +845,9 @@ def train():
 
     elif args.dataset_type == 'blender':
         if args.render_wo_images:
-            poses, render_poses, hwf, i_split, output_paths = load_blender_data(args, args.datadir, args.half_res, args.testskip, load_imgs=False, ori_H=args.ori_H, ori_W=args.ori_W)
+            poses, render_poses, hwf, i_split, output_paths = load_blender_data(args, args.datadir, args.half_res, args.testskip, load_imgs=False, ori_H=args.ori_H, ori_W=args.ori_W, ext=args.ext)
         else:
-            images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W = load_blender_data(args, args.datadir, args.half_res, args.testskip)
+            images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W = load_blender_data(args, args.datadir, args.half_res, args.testskip, ext=args.ext)
             if args.white_bkgd:
                 images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
             else:
@@ -862,7 +864,7 @@ def train():
             far = 6.
             
         if args.use_teacher_nerf:
-            poses_teacher, render_poses_teacher, _, i_split_teacher, _ = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W)
+            poses_teacher, render_poses_teacher, _, i_split_teacher, _ = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W, ext=args.ext)
             print('Loaded blender for teacher', poses_teacher.shape, render_poses_teacher.shape, args.datadir_teacher)
             i_train_teacher, i_val_teacher, i_test_teacher = i_split_teacher
 

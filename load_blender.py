@@ -34,7 +34,7 @@ def pose_spherical(theta, phi, radius):
     return c2w
 
 
-def load_blender_data(args, basedir, half_res=False, testskip=1, load_imgs=True, ori_H=None, ori_W=None):
+def load_blender_data(args, basedir, half_res=False, testskip=1, load_imgs=True, ori_H=None, ori_W=None, ext='.png'):
     splits = ['train', 'val', 'test']
     metas = {}
     for s in splits:
@@ -57,11 +57,11 @@ def load_blender_data(args, basedir, half_res=False, testskip=1, load_imgs=True,
                 skip = testskip
                 
             for frame in meta['frames'][::skip]:
-                fname = os.path.join(basedir, frame['file_path'] + '.png')
+                fname = os.path.join(basedir, frame['file_path'] + ext)
                 imgs.append(imageio.imread(fname))
                 poses.append(np.array(frame['transform_matrix']))
-                # paths.append(frame['file_path'] + '.png')
-                all_paths.append(frame['file_path'] + '.png')
+                # paths.append(frame['file_path'] + ext)
+                all_paths.append(frame['file_path'] + ext)
             imgs = (np.array(imgs) / 255.).astype(np.float32) # keep all 4 channels (RGBA)
             poses = np.array(poses).astype(np.float32)
             counts.append(counts[-1] + imgs.shape[0])
@@ -118,9 +118,9 @@ def load_blender_data(args, basedir, half_res=False, testskip=1, load_imgs=True,
                 skip = testskip
                 
             for frame in meta['frames'][::skip]:
-                fname = os.path.join(basedir, frame['file_path'] + '.png')
+                fname = os.path.join(basedir, frame['file_path'] + ext)
                 poses.append(np.array(frame['transform_matrix']))
-                all_paths.append(frame['file_path'] + '.png')
+                all_paths.append(frame['file_path'] + ext)
 
             poses = np.array(poses).astype(np.float32)
             # counts.append(counts[-1] + imgs.shape[0])
