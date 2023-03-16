@@ -58,11 +58,21 @@ net_fn = render_kwargs_test['network_query_fn']
 #     plt.imshow(rgb.cpu())
 #     plt.show()
 
-N = 256
-x = np.linspace(-3, 1, N+1)
-y = np.linspace(-4, 0, N+1)
-z = np.linspace(-1, 3, N+1)
+# scannet_scene0_add_v3
+# N = 256
+# x = np.linspace(-3, 1, N+1)
+# y = np.linspace(-4, 0, N+1)
+# z = np.linspace(-1, 3, N+1)
 
+# blendswap_whitehouse_origin_v5
+N = 256
+x = np.linspace(-3, 3, N+1)
+y = np.linspace(-3, 3, N+1)
+z = np.linspace(-3, 3, N+1)
+
+# x = np.linspace(-3, 3, N+1)
+# y = np.linspace(-3, 3, N+1)
+# z = np.linspace(-3, 3, N+1)
 
 # x = np.linspace(-1.5, 0.1, N+1)
 # y = np.linspace(-3, -1, N+1)
@@ -92,7 +102,7 @@ with torch.no_grad():
     # plt.hist(np.maximum(0,sigma.ravel()), log=True)
     # plt.show()
 
-threshold = 20 # 5 # 50.
+threshold = 5 # 5 # 50.
 print('fraction occupied', np.sum(sigma > threshold), np.mean(sigma > threshold))
 vertices, triangles = mcubes.marching_cubes(sigma, threshold)
 print('done', vertices.shape, triangles.shape)

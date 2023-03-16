@@ -185,6 +185,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
     disps = []
 
     t = time.time()
+    psnr = 0
     for i, c2w in enumerate(tqdm(render_poses)):
         # print(i, time.time() - t)
         t = time.time()
@@ -192,14 +193,19 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
         rgb = rgb.cpu().numpy()
 
         if gt_imgs is not None:
-            error_map = np.abs(rgb-gt_imgs[i])
+            gt_img = gt_imgs[i]
+            gt_img = cv2.resize(gt_img, (W, H))
+            
+            error_map = np.abs(rgb-gt_img)
             error_mask = np.mean(error_map, 2) > 0.1
             error_mask = np.stack([error_mask]*3, -1)
+
+            psnr += mse2psnr_np(img2mse_np(rgb, gt_img))
 
             if render_mask_only:
                 rgb = error_mask
             else:
-                rgb = np.concatenate([rgb, gt_imgs[i], error_map, error_mask], 1)
+                rgb = np.concatenate([rgb, gt_img, error_map, error_mask], 1)
             
         rgbs.append(rgb)
         disps.append(disp.cpu().numpy())
@@ -225,8 +231,14 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             else:
                 filename = os.path.join(savedir, '{:05d}.jpg'.format(i))
             imageio.imwrite(filename, rgb8)
-
-
+    
+    psnr = psnr / len(render_poses)
+    print(psnr)
+    
+    if savedir is not None:
+        with open(os.path.join(savedir, 'psnr.txt'), 'w') as f:
+            f.write(str(psnr)+'\n')
+    
     rgbs = np.stack(rgbs, 0)
     disps = np.stack(disps, 0)
 

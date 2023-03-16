@@ -10,6 +10,8 @@ img2mse = lambda x, y : torch.mean((x - y) ** 2)
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
 
+img2mse_np = lambda x, y : np.mean((x - y) ** 2)
+mse2psnr_np = lambda x : -10. * np.log(x) / np.log(np.array([10.]))
 
 # Positional encoding (section 5.1)
 class Embedder:
