@@ -226,8 +226,9 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
                     filename = os.path.join(savedir, output_paths[i].split('/')[-1])
                 else:
                     filename = os.path.join(savedir, '{:04d}.png'.format(i))
-                cur_h, cur_w = rgb8.shape[:2]
-                rgb8 = cv2.resize(rgb8, (int(cur_w*2), int(cur_h*2)))
+                
+                # cur_h, cur_w = rgb8.shape[:2]
+                # rgb8 = cv2.resize(rgb8, (int(cur_w*2), int(cur_h*2)))
             else:
                 filename = os.path.join(savedir, '{:05d}.jpg'.format(i))
             imageio.imwrite(filename, rgb8)
