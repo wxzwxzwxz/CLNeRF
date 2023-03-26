@@ -105,9 +105,9 @@ with torch.no_grad():
 threshold = 5 # 5 # 50.
 print('fraction occupied', np.sum(sigma > threshold), np.mean(sigma > threshold))
 vertices, triangles = mcubes.marching_cubes(sigma, threshold)
-print('done', vertices.shape, triangles.shape)
+print('done', vertices.shape, triangles.shape, expname+"_{}.obj".format(N))
 
 ## Uncomment to save out the mesh
 # mcubes.export_mesh(vertices, triangles, "logs/lego_example/lego_{}.dae".format(N), "lego")
 # mcubes.export_mesh(vertices, triangles, os.path.join("logs", expname, "{}.dae".format(N)))
-mcubes.export_obj(vertices, triangles, os.path.join("logs", expname, "{}.obj".format(N)))
+mcubes.export_obj(vertices, triangles, os.path.join("logs", expname, expname+"_{}.obj".format(N)))

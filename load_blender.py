@@ -34,11 +34,22 @@ def pose_spherical(theta, phi, radius):
     return c2w
 
 
-def load_blender_data(args, basedir, half_res=False, testskip=1, load_imgs=True, ori_H=None, ori_W=None, ext='.png'):
+def load_blender_data(args, basedir, half_res=False, testskip=1, 
+                    load_imgs=True, ori_H=None, ori_W=None, ext='.png',
+                    transforms_train=None, transforms_val=None, transforms_test=None):
     splits = ['train', 'val', 'test']
     metas = {}
     for s in splits:
-        with open(os.path.join(basedir, 'transforms_{}.json'.format(s)), 'r') as fp:
+        if s == 'train' and transforms_train is not None: 
+            json_file = transforms_train
+        elif s == 'val' and transforms_val is not None: 
+            json_file = transforms_val
+        elif s == 'test' and transforms_test is not None: 
+            json_file = transforms_test
+        else:
+            json_file = 'transforms_{}.json'.format(s)
+            
+        with open(os.path.join(basedir, json_file), 'r') as fp:
             metas[s] = json.load(fp)
 
     if load_imgs == True:

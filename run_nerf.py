@@ -187,6 +187,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
     t = time.time()
     psnr = 0
     for i, c2w in enumerate(tqdm(render_poses)):
+    # for i, c2w in enumerate((render_poses)):
         # print(i, time.time() - t)
         t = time.time()
         rgb, disp, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs)
@@ -200,7 +201,11 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             error_mask = np.mean(error_map, 2) > 0.1
             error_mask = np.stack([error_mask]*3, -1)
 
-            psnr += mse2psnr_np(img2mse_np(rgb, gt_img))
+            # if error_mask.sum() > 2000:
+            #     print(i)
+            
+            mse = img2mse_np(rgb, gt_img)
+            psnr += mse2psnr_np(mse)
 
             if render_mask_only:
                 rgb = error_mask
@@ -817,7 +822,9 @@ def config_parser():
     parser.add_argument("--ori_W", type=float, default=None)
     parser.add_argument("--w_loss_teacher", type=float, default=1.0)
     parser.add_argument("--ext", type=str, default='.png')
-    
+    parser.add_argument("--transforms_train", type=str, default=None)
+    parser.add_argument("--transforms_val", type=str, default=None)
+    parser.add_argument("--transforms_test", type=str, default=None)
                         
     return parser
 
@@ -858,9 +865,12 @@ def train():
 
     elif args.dataset_type == 'blender':
         if args.render_wo_images:
-            poses, render_poses, hwf, i_split, output_paths = load_blender_data(args, args.datadir, args.half_res, args.testskip, load_imgs=False, ori_H=args.ori_H, ori_W=args.ori_W, ext=args.ext)
+            poses, render_poses, hwf, i_split, output_paths = load_blender_data(args, args.datadir, args.half_res, args.testskip, 
+                                                                                load_imgs=False, ori_H=args.ori_H, ori_W=args.ori_W, ext=args.ext,
+                                                                                transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test)
         else:
-            images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W = load_blender_data(args, args.datadir, args.half_res, args.testskip, ext=args.ext)
+            images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W = load_blender_data(args, args.datadir, args.half_res, args.testskip, ext=args.ext,
+                                                                                                        transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test)
             if args.white_bkgd:
                 images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
             else:
@@ -877,7 +887,8 @@ def train():
             far = 6.
             
         if args.use_teacher_nerf:
-            poses_teacher, render_poses_teacher, _, i_split_teacher, _ = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W, ext=args.ext)
+            poses_teacher, render_poses_teacher, _, i_split_teacher, _ = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W, ext=args.ext,
+                                                                                            transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test)
             print('Loaded blender for teacher', poses_teacher.shape, render_poses_teacher.shape, args.datadir_teacher)
             i_train_teacher, i_val_teacher, i_test_teacher = i_split_teacher
 
@@ -894,7 +905,8 @@ def train():
             #     images = images[...,:3]
 
         if args.use_teacher_nerf_second:
-            poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _ = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W)
+            poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _ = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W,
+                                                                                                                transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test)
             print('Loaded blender for second teacher', poses_teacher_second.shape, render_poses_teacher_second.shape, args.datadir_teacher_second)
             i_train_teacher_second, _, _ = i_split_teacher_second
 
@@ -1001,6 +1013,9 @@ def train():
                 images = None
 
             testsavedir = os.path.join(basedir, expname, 'renderonly_{}_{:06d}'.format('test' if args.render_test else 'path', start))
+            if args.transforms_test is not None:
+                testsavedir = testsavedir + '_' + args.transforms_test.split('.')[0].split('_')[-1]
+
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', render_poses.shape)
 
