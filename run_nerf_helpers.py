@@ -67,7 +67,7 @@ def get_embedder(multires, i=0):
 
 # Model
 class NeRF(nn.Module):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False):
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False, args=None):
         """ 
         """
         super(NeRF, self).__init__()
@@ -88,10 +88,17 @@ class NeRF(nn.Module):
         # self.views_linears = nn.ModuleList(
         #     [nn.Linear(input_ch_views + W, W//2)] + [nn.Linear(W//2, W//2) for i in range(D//2)])
         
+        self.args = args
+        # if self.args.no_viewdirs_distill:
+        self.emb_linear_penultimate = nn.Linear(W, W//2)
+
         if use_viewdirs:
             self.feature_linear = nn.Linear(W, W)
             self.alpha_linear = nn.Linear(W, 1)
             self.rgb_linear = nn.Linear(W//2, 3)
+
+            if self.args.add_dino:
+                self.emb_linear = nn.Linear(W//2, 64)
         else:
             self.output_linear = nn.Linear(W, output_ch)
 
@@ -114,7 +121,14 @@ class NeRF(nn.Module):
                 h = F.relu(h)
 
             rgb = self.rgb_linear(h)
-            outputs = torch.cat([rgb, alpha], -1)
+
+            if self.args.add_dino:
+                # if self.args.no_viewdirs_distill:
+                h = self.emb_linear_penultimate(feature)
+                ft = self.emb_linear(h)
+                outputs = torch.cat([rgb, alpha, ft], -1)
+            else:
+                outputs = torch.cat([rgb, alpha], -1)
         else:
             outputs = self.output_linear(h)
 

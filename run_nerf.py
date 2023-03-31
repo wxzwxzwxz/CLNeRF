@@ -18,6 +18,8 @@ from load_deepvoxels import load_dv_data
 from load_blender import load_blender_data
 from load_LINEMOD import load_LINEMOD_data
 
+from utils import x2samples
+import utils
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(0)
@@ -169,7 +171,7 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
     return ret_list + [ret_dict]
 
 
-def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0, render_mask_only=False, output_paths=None):
+def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0, render_mask_only=False, output_paths=None, render_mask_threshold=0.1):
 
     H, W, focal = hwf
 
@@ -198,7 +200,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             gt_img = cv2.resize(gt_img, (W, H))
             
             error_map = np.abs(rgb-gt_img)
-            error_mask = np.mean(error_map, 2) > 0.1
+            error_mask = np.mean(error_map, 2) > render_mask_threshold # 0.1
             error_mask = np.stack([error_mask]*3, -1)
 
             # if error_mask.sum() > 2000:
@@ -264,15 +266,17 @@ def create_nerf(args, ckpt_path=None):
     skips = [4]
     model = NeRF(D=args.netdepth, W=args.netwidth,
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
-                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
-    grad_vars = list(model.parameters())
+                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
+    # grad_vars = list(model.parameters())
+    grad_vars = [z[1] for z in model.named_parameters() if 'emb_linear' not in z[0]]
 
     model_fine = None
     if args.N_importance > 0:
         model_fine = NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
                           input_ch=input_ch, output_ch=output_ch, skips=skips,
-                          input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
-        grad_vars += list(model_fine.parameters())
+                          input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
+        # grad_vars += list(model_fine.parameters())
+        grad_vars += [z[1] for z in model_fine.named_parameters() if 'emb_linear' not in z[0]]
 
     network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
                                                                 embed_fn=embed_fn,
@@ -306,9 +310,16 @@ def create_nerf(args, ckpt_path=None):
         optimizer.load_state_dict(ckpt['optimizer_state_dict'])
 
         # Load model
-        model.load_state_dict(ckpt['network_fn_state_dict'])
+        model.load_state_dict(ckpt['network_fn_state_dict'], strict=False)
         if model_fine is not None:
-            model_fine.load_state_dict(ckpt['network_fine_state_dict'])
+            model_fine.load_state_dict(ckpt['network_fine_state_dict'], strict=False)
+
+    if args.add_dino:
+        assert args.ft_path is not None, 'for now use only pre-trained model'
+        # add emb parameters after loading optimizer, freeze for 1000 iter
+        utils.initialize_optimizer(optimizer, model, model_fine)
+        utils.set_requires_grad(model, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
+        utils.set_requires_grad(model_fine, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
 
     ##########################
 
@@ -354,7 +365,7 @@ def create_mask_nerf(args, ckpt_path):
     #              input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
     model = NeRF(D=args.netdepth_mask, W=args.netwidth_mask,
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
-                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
     grad_vars = list(model.parameters())
 
     model_fine = None
@@ -397,9 +408,9 @@ def create_mask_nerf(args, ckpt_path):
         # optimizer.load_state_dict(ckpt['optimizer_state_dict'])
 
         # Load model
-        model.load_state_dict(ckpt['network_fn_state_dict'])
+        model.load_state_dict(ckpt['network_fn_state_dict'], strict=False)
         if model_fine is not None:
-            model_fine.load_state_dict(ckpt['network_fine_state_dict'])
+            model_fine.load_state_dict(ckpt['network_fine_state_dict'], strict=False)
 
     ##########################
 
@@ -437,6 +448,8 @@ def raw2weights(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
     dists = dists * torch.norm(rays_d[...,None,:], dim=-1)
 
     rgb = torch.sigmoid(raw[...,:3])  # [N_rays, N_samples, 3]
+    # emb = torch.tanh(raw[...,-64:])  # [N_rays, N_samples, 3]
+
     noise = 0.
     if raw_noise_std > 0.:
         noise = torch.randn(raw[...,3].shape) * raw_noise_std
@@ -450,7 +463,7 @@ def raw2weights(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
     alpha = raw2alpha(raw[...,3] + noise, dists)  # [N_rays, N_samples]
     weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
     # rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
-
+    
     # depth_map = torch.sum(weights * z_vals, -1)
     # disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
     # acc_map = torch.sum(weights, -1)
@@ -752,6 +765,7 @@ def config_parser():
     parser.add_argument("--render_test", action='store_true', 
                         help='render the test set instead of render_poses path')
     parser.add_argument("--render_mask_only", action='store_true')
+    parser.add_argument("--render_mask_threshold", type=float, default=0.1)
     parser.add_argument("--render_factor", type=int, default=0, 
                         help='downsampling factor to speed up rendering, set 4 or 8 for fast preview')
 
@@ -825,6 +839,11 @@ def config_parser():
     parser.add_argument("--transforms_train", type=str, default=None)
     parser.add_argument("--transforms_val", type=str, default=None)
     parser.add_argument("--transforms_test", type=str, default=None)
+    parser.add_argument("--trainskip", type=int, default=1)
+    parser.add_argument("--add_dino", type=bool, default=False)
+    parser.add_argument("--dino_dir", type=str, default='')
+    parser.add_argument("--ckpt_path", type=str, default=None)
+    
                         
     return parser
 
@@ -865,12 +884,14 @@ def train():
 
     elif args.dataset_type == 'blender':
         if args.render_wo_images:
-            poses, render_poses, hwf, i_split, output_paths = load_blender_data(args, args.datadir, args.half_res, args.testskip, 
+            poses, render_poses, hwf, i_split, output_paths, fts_train, fts_test = load_blender_data(args, args.datadir, args.half_res, args.testskip, 
                                                                                 load_imgs=False, ori_H=args.ori_H, ori_W=args.ori_W, ext=args.ext,
-                                                                                transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test)
+                                                                                transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
+                                                                                trainskip=args.trainskip)
         else:
-            images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W = load_blender_data(args, args.datadir, args.half_res, args.testskip, ext=args.ext,
-                                                                                                        transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test)
+            images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W, fts_train, fts_test = load_blender_data(args, args.datadir, args.half_res, args.testskip, ext=args.ext,
+                                                                                                        transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
+                                                                                                        trainskip=args.trainskip)
             if args.white_bkgd:
                 images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
             else:
@@ -887,8 +908,9 @@ def train():
             far = 6.
             
         if args.use_teacher_nerf:
-            poses_teacher, render_poses_teacher, _, i_split_teacher, _ = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W, ext=args.ext,
-                                                                                            transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test)
+            poses_teacher, render_poses_teacher, _, i_split_teacher, _, fts_train, fts_test = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W, ext=args.ext,
+                                                                                            transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
+                                                                                            trainskip=args.trainskip)
             print('Loaded blender for teacher', poses_teacher.shape, render_poses_teacher.shape, args.datadir_teacher)
             i_train_teacher, i_val_teacher, i_test_teacher = i_split_teacher
 
@@ -905,8 +927,9 @@ def train():
             #     images = images[...,:3]
 
         if args.use_teacher_nerf_second:
-            poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _ = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W,
-                                                                                                                transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test)
+            poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _, fts_train, fts_test = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W,
+                                                                                                                transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
+                                                                                                                trainskip=args.trainskip)
             print('Loaded blender for second teacher', poses_teacher_second.shape, render_poses_teacher_second.shape, args.datadir_teacher_second)
             i_train_teacher_second, _, _ = i_split_teacher_second
 
@@ -970,7 +993,7 @@ def train():
             file.write(open(args.config, 'r').read())
 
     # Create nerf model
-    render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(args)
+    render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(args, ckpt_path=args.ckpt_path)
     global_step = start
 
     bds_dict = {
@@ -1019,7 +1042,7 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', render_poses.shape)
 
-            rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor, render_mask_only=args.render_mask_only, output_paths=output_paths)
+            rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor, render_mask_only=args.render_mask_only, output_paths=output_paths, render_mask_threshold=args.render_mask_threshold)
             print('Done rendering', testsavedir)
             # imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
 
@@ -1040,17 +1063,23 @@ def train():
         rays_rgb = rays_rgb.astype(np.float32)
         print('shuffle rays')
         np.random.shuffle(rays_rgb)
+        
+        if args.add_dino:
+            # rays_emb = x2samples(features, i_train)
+            rays_emb = x2samples_new(fts_train)
+            rays_emb = rays_emb[rand_idx]
 
         print('done')
         i_batch = 0
-
+    
     # Move training data to GPU
     if use_batching:
         images = torch.Tensor(images).to(device)
     poses = torch.Tensor(poses).to(device)
     if use_batching:
         rays_rgb = torch.Tensor(rays_rgb).to(device)
-
+        if args.add_dino:
+            rays_emb = torch.Tensor(rays_emb).to(device)
 
     # N_iters = 200000 + 1
     N_iters = args.N_iters + 1
@@ -1072,12 +1101,24 @@ def train():
             batch = rays_rgb[i_batch:i_batch+N_rand] # [B, 2+1, 3*?]
             batch = torch.transpose(batch, 0, 1)
             batch_rays, target_s = batch[:2], batch[2]
+            
+            if args.add_dino:
+                batch_emb = rays_emb[i_batch:i_batch+N_rand] # [B, 2+1, 3*?]
+                batch_emb = torch.transpose(batch_emb, 0, 1)
+                target_emb = batch_emb[0]
+                # assert target_emb.shape[0] == N_rand
+                if target_emb.shape[0] != N_rand:
+                    print('UNEQUAL')
+                    print(target_emb.shape[0], N_rand)
+                assert target_emb.shape[1] == 64
 
             i_batch += N_rand
             if i_batch >= rays_rgb.shape[0]:
                 print("Shuffle data after an epoch!")
                 rand_idx = torch.randperm(rays_rgb.shape[0])
                 rays_rgb = rays_rgb[rand_idx]
+                if args.add_dino:
+                    rays_emb = rays_emb[rand_idx]
                 i_batch = 0
 
         else:
@@ -1122,11 +1163,21 @@ def train():
         trans = extras['raw'][...,-1]
         loss = img_loss
         psnr = mse2psnr(img_loss)
+        if args.add_dino:
+            distances = ((emb - target_emb) ** 2).sum(dim=1)
+            loss_distillation = distances.mean() * 0.001
+            # print('rgb vs. ft', loss, loss_distillation, loss / loss_distillation)
+            loss = loss + loss_distillation
 
         if 'rgb0' in extras:
             img_loss0 = img2mse(extras['rgb0'], target_s)
             loss = loss + img_loss0
             psnr0 = mse2psnr(img_loss0)
+            if args.add_dino:
+                distances = ((extras['emb0'] - target_emb) ** 2).sum(dim=1)
+                loss_distillation0 = distances.mean() * 0.001
+                # print('rgb vs. ft', img_loss0, loss_distillation0, img_loss0 / loss_distillation0)
+                loss = loss + loss_distillation0
 
         if args.use_teacher_nerf:
             # randomly sample rays and genrate ground truth

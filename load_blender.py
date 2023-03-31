@@ -5,7 +5,7 @@ import imageio
 import json
 import torch.nn.functional as F
 import cv2
-
+from utils import load_features
 
 trans_t = lambda t : torch.Tensor([
     [1,0,0,0],
@@ -36,7 +36,7 @@ def pose_spherical(theta, phi, radius):
 
 def load_blender_data(args, basedir, half_res=False, testskip=1, 
                     load_imgs=True, ori_H=None, ori_W=None, ext='.png',
-                    transforms_train=None, transforms_val=None, transforms_test=None):
+                    transforms_train=None, transforms_val=None, transforms_test=None, trainskip=1):
     splits = ['train', 'val', 'test']
     metas = {}
     for s in splits:
@@ -62,7 +62,10 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             imgs = []
             poses = []
             paths = []
-            if s=='train' or testskip==0:
+            
+            if s=='train' or trainskip!=1:
+                skip = trainskip
+            elif s=='train' or testskip==0:
                 skip = 1
             else:
                 skip = testskip
@@ -115,7 +118,26 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             poses[:, :, :3] *= args.scene_scale
             render_poses[:, :, :3] *= args.scene_scale
 
-        return imgs, poses, render_poses, [H, W, focal], i_split, all_paths, ori_H, ori_W
+        if args.add_dino:
+            # dsid = args.dsid
+            # fts = load_features(vid=dsid, imhw=(height, width))
+            fts = load_features(os.path.join(args.datadir, 'train', 'dino.pt'), imhw=(H, W))
+            fns = [x.split('/')[-1] for x in all_paths[i_split[0]]]
+            fts_train = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
+
+            # fts = load_features(os.path.join(args.datadir, 'val', 'dino.pt'), imhw=(H, W))
+            # fns = [x.split('/')[-1] for x in all_paths[i_split[1]]]
+            # fts_val = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
+
+            fts = load_features(os.path.join(args.datadir, 'test', 'dino.pt'), imhw=(H, W))
+            fns = [x.split('/')[-1] for x in all_paths[i_split[2]]]
+            fts_test = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
+        else:
+            fts_train = None
+            fts_val = None
+            fts_test = None
+            
+        return imgs, poses, render_poses, [H, W, focal], i_split, all_paths, ori_H, ori_W, fts_train, fts_test
     else:
         all_poses = []
         all_paths = []
@@ -123,7 +145,10 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
         for s in splits:
             meta = metas[s]
             poses = []
-            if s=='train' or testskip==0:
+            
+            if s=='train' or trainskip!=1:
+                skip = trainskip
+            elif s=='train' or testskip==0:
                 skip = 1
             else:
                 skip = testskip
@@ -154,6 +179,25 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             W = W//2
             focal = focal/2.
 
-        return poses, render_poses, [H, W, focal], i_split, all_paths
+        if args.add_dino:
+            # dsid = args.dsid
+            # fts = load_features(vid=dsid, imhw=(height, width))
+            fts = load_features(os.path.join(args.datadir, 'train', 'dino.pt'), imhw=(H, W))
+            fns = [x.split('/')[-1] for x in all_paths[i_split[0]]]
+            fts_train = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
+
+            # fts = load_features(os.path.join(args.datadir, 'val', 'dino.pt'), imhw=(H, W))
+            # fns = [x.split('/')[-1] for x in all_paths[i_split[1]]]
+            # fts_val = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
+
+            fts = load_features(os.path.join(args.datadir, 'test', 'dino.pt'), imhw=(H, W))
+            fns = [x.split('/')[-1] for x in all_paths[i_split[2]]]
+            fts_test = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
+        else:
+            fts_train = None
+            fts_val = None
+            fts_test = None
+
+        return poses, render_poses, [H, W, focal], i_split, all_paths, fts_train, fts_test
 
 
