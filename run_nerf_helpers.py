@@ -90,7 +90,8 @@ class NeRF(nn.Module):
         
         self.args = args
         # if self.args.no_viewdirs_distill:
-        self.emb_linear_penultimate = nn.Linear(W, W//2)
+        if self.args.add_dino:
+            self.emb_linear_penultimate = nn.Linear(W, W//2)
 
         if use_viewdirs:
             self.feature_linear = nn.Linear(W, W)

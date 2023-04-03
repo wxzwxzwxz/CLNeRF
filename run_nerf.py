@@ -277,15 +277,19 @@ def create_nerf(args, ckpt_path=None):
     if args.finetune_last_layer_only == True:
         for z in model.named_parameters():
             if 'alpha_linear' in z[0] or 'rgb_linear' in z[0]:
-                z[1].requires_grad = False
+                # z[1].requires_grad = True
+                z[1].requires_grad_(True)
             else:
-                z[1].requires_grad = False
+                # z[1].requires_grad = False
+                z[1].requires_grad_(False)
     elif args.finetune_last_layers > 0:
         for z in model.named_parameters():
             if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
-                z[1].requires_grad = True
+                # z[1].requires_grad = True
+                z[1].requires_grad_(True)
             else:
-                z[1].requires_grad = False
+                # z[1].requires_grad = False
+                z[1].requires_grad_(False)
 
     # grad_vars = list(model.parameters())
     grad_vars = [z[1] for z in model.named_parameters() if 'emb_linear' not in z[0] and z[1].requires_grad == True]
@@ -297,9 +301,22 @@ def create_nerf(args, ckpt_path=None):
                           input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
 
         # Partly finetune
-        for z in model_fine.named_parameters():
-            if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
-                z[1].requires_grad = False
+        if args.finetune_last_layer_only == True:
+            for z in model_fine.named_parameters():
+                if 'alpha_linear' in z[0] or 'rgb_linear' in z[0]:
+                    # z[1].requires_grad = True
+                    z[1].requires_grad_(True)
+                else:
+                    # z[1].requires_grad = False
+                    z[1].requires_grad_(False)
+        elif args.finetune_last_layers > 0:
+            for z in model_fine.named_parameters():
+                if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
+                    # z[1].requires_grad = True
+                    z[1].requires_grad_(True)
+                else:
+                    # z[1].requires_grad = False
+                    z[1].requires_grad_(False)
                 
         # grad_vars += list(model_fine.parameters())
         grad_vars += [z[1] for z in model_fine.named_parameters() if 'emb_linear' not in z[0] and z[1].requires_grad == True]
@@ -351,6 +368,28 @@ def create_nerf(args, ckpt_path=None):
         utils.set_requires_grad(model_fine, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
 
     ##########################
+    if args.bitfit:
+        # freeze model params except bias
+        _ignores=[]
+        _keeps='bias'
+        
+        for n,v in model.named_parameters():
+            if _keeps not in n:
+                v.requires_grad_(False)
+        
+        if model_fine is not None:
+            for n,v in model_fine.named_parameters():
+                if _keeps not in n:
+                    v.requires_grad_(False)
+        
+        print("Tuning only:")
+        for n,v in model.named_parameters():
+            if v.requires_grad ==True:
+                print(n)
+        if model_fine is not None:
+            for n,v in model_fine.named_parameters():
+                if v.requires_grad ==True:
+                    print(n)
 
     render_kwargs_train = {
         'network_query_fn' : network_query_fn,
@@ -880,6 +919,8 @@ def config_parser():
     parser.add_argument("--point_mask_threshold", type=float, default=0.9)
     parser.add_argument("--finetune_last_layers", type=int, default=0)
     parser.add_argument("--finetune_last_layer_only", type=bool, default=False)
+    parser.add_argument("--spherical_radius", type=float, default=4.0)
+    parser.add_argument("--bitfit", action='store_true')
                         
     return parser
 
@@ -923,11 +964,11 @@ def train():
             poses, render_poses, hwf, i_split, output_paths, fts_train, fts_test = load_blender_data(args, args.datadir, args.half_res, args.testskip, 
                                                                                 load_imgs=False, ori_H=args.ori_H, ori_W=args.ori_W, ext=args.ext,
                                                                                 transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
-                                                                                trainskip=args.trainskip)
+                                                                                trainskip=args.trainskip, spherical_radius=args.spherical_radius)
         else:
             images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W, fts_train, fts_test = load_blender_data(args, args.datadir, args.half_res, args.testskip, ext=args.ext,
                                                                                                         transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
-                                                                                                        trainskip=args.trainskip)
+                                                                                                        trainskip=args.trainskip, spherical_radius=args.spherical_radius)
             if args.white_bkgd:
                 images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
             else:
@@ -946,7 +987,7 @@ def train():
         if args.use_teacher_nerf:
             poses_teacher, render_poses_teacher, _, i_split_teacher, _, fts_train, fts_test = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W, ext=args.ext,
                                                                                             transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
-                                                                                            trainskip=args.trainskip)
+                                                                                            trainskip=args.trainskip, spherical_radius=args.spherical_radius)
             print('Loaded blender for teacher', poses_teacher.shape, render_poses_teacher.shape, args.datadir_teacher)
             i_train_teacher, i_val_teacher, i_test_teacher = i_split_teacher
 
@@ -965,7 +1006,7 @@ def train():
         if args.use_teacher_nerf_second:
             poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _, fts_train, fts_test = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W,
                                                                                                                 transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
-                                                                                                                trainskip=args.trainskip)
+                                                                                                                trainskip=args.trainskip, spherical_radius=args.spherical_radius)
             print('Loaded blender for second teacher', poses_teacher_second.shape, render_poses_teacher_second.shape, args.datadir_teacher_second)
             i_train_teacher_second, _, _ = i_split_teacher_second
 
