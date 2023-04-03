@@ -274,9 +274,18 @@ def create_nerf(args, ckpt_path=None):
     #         # utils.set_requires_grad(model, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
     
     # Partly finetune
-    for z in model.named_parameters():
-        if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
-            z[1].requires_grad = False
+    if args.finetune_last_layer_only == True:
+        for z in model.named_parameters():
+            if 'alpha_linear' in z[0] or 'rgb_linear' in z[0]:
+                z[1].requires_grad = False
+            else:
+                z[1].requires_grad = False
+    elif args.finetune_last_layers > 0:
+        for z in model.named_parameters():
+            if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
+                z[1].requires_grad = True
+            else:
+                z[1].requires_grad = False
 
     # grad_vars = list(model.parameters())
     grad_vars = [z[1] for z in model.named_parameters() if 'emb_linear' not in z[0] and z[1].requires_grad == True]
@@ -870,6 +879,7 @@ def config_parser():
     parser.add_argument("--ckpt_path", type=str, default=None)
     parser.add_argument("--point_mask_threshold", type=float, default=0.9)
     parser.add_argument("--finetune_last_layers", type=int, default=0)
+    parser.add_argument("--finetune_last_layer_only", type=bool, default=False)
                         
     return parser
 
