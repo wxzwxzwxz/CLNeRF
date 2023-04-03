@@ -267,16 +267,33 @@ def create_nerf(args, ckpt_path=None):
     model = NeRF(D=args.netdepth, W=args.netwidth,
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
                  input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
-    # grad_vars = list(model.parameters())
-    grad_vars = [z[1] for z in model.named_parameters() if 'emb_linear' not in z[0]]
 
+    # if args.finetune_last_layers > 0:
+    #     for i in range(args.finetune_last_layers):
+    #          = model.pts_linears[-i].
+    #         # utils.set_requires_grad(model, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
+    
+    # Partly finetune
+    for z in model.named_parameters():
+        if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
+            z[1].requires_grad = False
+
+    # grad_vars = list(model.parameters())
+    grad_vars = [z[1] for z in model.named_parameters() if 'emb_linear' not in z[0] and z[1].requires_grad == True]
+    
     model_fine = None
     if args.N_importance > 0:
         model_fine = NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
                           input_ch=input_ch, output_ch=output_ch, skips=skips,
                           input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
+
+        # Partly finetune
+        for z in model_fine.named_parameters():
+            if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
+                z[1].requires_grad = False
+                
         # grad_vars += list(model_fine.parameters())
-        grad_vars += [z[1] for z in model_fine.named_parameters() if 'emb_linear' not in z[0]]
+        grad_vars += [z[1] for z in model_fine.named_parameters() if 'emb_linear' not in z[0] and z[1].requires_grad == True]
 
     network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
                                                                 embed_fn=embed_fn,
@@ -845,6 +862,7 @@ def config_parser():
     parser.add_argument("--dino_dir", type=str, default='')
     parser.add_argument("--ckpt_path", type=str, default=None)
     parser.add_argument("--point_mask_threshold", type=float, default=0.9)
+    parser.add_argument("--finetune_last_layers", type=int, default=0)
                         
     return parser
 
