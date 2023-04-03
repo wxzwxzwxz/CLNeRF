@@ -637,9 +637,13 @@ def render_rays(ray_batch,
             # generate mask
             point_rgb, point_alpha, weights = raw2weights(raw_mask, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
             mask = point_rgb * point_alpha.unsqueeze(-1)
+            
+            # input()
             mask = torch.mean(mask, -1)
             mask = mask > point_mask_threshold
             mask = mask.int()
+            # print(mask.sum() / len(mask))
+            # input()
             mask = mask.unsqueeze(-1)
         
         point_error = torch.abs(raw_teacher * (1-mask) - raw * (1-mask))
