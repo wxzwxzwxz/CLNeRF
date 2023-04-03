@@ -324,7 +324,10 @@ def create_nerf(args, ckpt_path=None):
         ckpt = torch.load(ckpt_path)
 
         start = ckpt['global_step']
-        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        try:
+            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        except Exception as e:
+            print(e)
 
         # Load model
         model.load_state_dict(ckpt['network_fn_state_dict'], strict=False)
