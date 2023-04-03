@@ -533,6 +533,7 @@ def render_rays(ray_batch,
                 verbose=False,
                 pytest=False,
                 use_point_mask=False,
+                point_mask_threshold=0.9,
                 render_kwargs_test_teacher=None,
                 render_kwargs_test_teacher_second=None, 
                 render_kwargs_test_mask=None
@@ -617,7 +618,7 @@ def render_rays(ray_batch,
             point_rgb, point_alpha, weights = raw2weights(raw_mask, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
             mask = point_rgb * point_alpha.unsqueeze(-1)
             mask = torch.mean(mask, -1)
-            mask = mask > 0.9
+            mask = mask > point_mask_threshold
             mask = mask.int()
             mask = mask.unsqueeze(-1)
         
@@ -660,7 +661,7 @@ def render_rays(ray_batch,
                 point_rgb, point_alpha, weights = raw2weights(raw_mask, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
                 mask = point_rgb * point_alpha.unsqueeze(-1)
                 mask = torch.mean(mask, -1)
-                mask = mask > 0.9
+                mask = mask > point_mask_threshold
                 mask = mask.int()
                 mask = mask.unsqueeze(-1)
             
@@ -843,7 +844,7 @@ def config_parser():
     parser.add_argument("--add_dino", type=bool, default=False)
     parser.add_argument("--dino_dir", type=str, default='')
     parser.add_argument("--ckpt_path", type=str, default=None)
-    
+    parser.add_argument("--point_mask_threshold", type=float, default=0.9)
                         
     return parser
 
@@ -1002,6 +1003,14 @@ def train():
     }
     render_kwargs_train.update(bds_dict)
     render_kwargs_test.update(bds_dict)
+
+    # update point-mask nerf teacher model
+    if args.use_point_mask:
+        bds_dict = {
+            'point_mask_threshold' : args.point_mask_threshold,
+        }
+        render_kwargs_train.update(bds_dict)
+        render_kwargs_test.update(bds_dict)
 
     # Create teacher nerf model
     if args.use_teacher_nerf:

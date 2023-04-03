@@ -22,5 +22,5 @@ precrop_frac = 0.5
 ext = .jpg
 half_res = False
 render_factor = 4
-near = 5
-far = 20
+near = 1
+far = 10
