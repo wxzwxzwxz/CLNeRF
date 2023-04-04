@@ -678,7 +678,6 @@ def render_rays(ray_batch,
             point_rgb, point_alpha, weights = raw2weights(raw_mask, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
             mask = point_rgb * point_alpha.unsqueeze(-1)
             
-            # input()
             mask = torch.mean(mask, -1)
             mask = mask > point_mask_threshold
             mask = mask.int()
@@ -687,11 +686,13 @@ def render_rays(ray_batch,
             mask = mask.unsqueeze(-1)
         
         point_error = torch.abs(raw_teacher * (1-mask) - raw * (1-mask))
-        point_error = torch.sum(point_error) / (torch.sum(1-mask)+1e-6)
+        # point_error = torch.sum(point_error) / (torch.sum(1-mask)+1e-6)
+        point_error = torch.sum(point_error, 1) / (torch.sum((1-mask), 1)+1e-6)
 
         if render_kwargs_test_teacher_second is not None:
             point_error_second = torch.abs(raw_teacher_second * (1-mask) - raw * (1-mask))
-            point_error_second = torch.sum(point_error_second) / (torch.sum(1-mask)+1e-6)
+            # point_error_second = torch.sum(point_error_second) / (torch.sum(1-mask)+1e-6)
+            point_error_second = torch.sum(point_error_second, 1) / (torch.sum((1-mask), 1)+1e-6)
 
     rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
@@ -730,11 +731,13 @@ def render_rays(ray_batch,
                 mask = mask.unsqueeze(-1)
             
             point_error = torch.abs(raw_teacher * (1-mask) - raw * (1-mask))
-            point_error = torch.sum(point_error) / (torch.sum(1-mask)+1e-6)
+            # point_error = torch.sum(point_error) / (torch.sum(1-mask)+1e-6)
+            point_error = torch.sum(point_error, 1) / (torch.sum((1-mask), 1)+1e-6)
 
             if render_kwargs_test_teacher_second is not None:
                 point_error_second = torch.abs(raw_teacher_second * (1-mask) - raw * (1-mask))
-                point_error_second = torch.sum(point_error_second) / (torch.sum(1-mask)+1e-6)
+                # point_error_second = torch.sum(point_error_second) / (torch.sum(1-mask)+1e-6)
+                point_error_second = torch.sum(point_error_second, 1) / (torch.sum((1-mask), 1)+1e-6)
 
         rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
 
@@ -1268,10 +1271,19 @@ def train():
                                                         render_kwargs_test_teacher_second=render_kwargs_test_teacher_second,
                                                         render_kwargs_test_mask=render_kwargs_test_mask,
                                                         **render_kwargs_train)
-                loss_teacher = extras_student['point_error'][0] + extras_student['point_error0'][0]
+                # loss_teacher = extras_student['point_error'][0] + extras_student['point_error0'][0]
+                # loss += loss_teacher * args.w_loss_teacher
+                with torch.no_grad():
+                    rgb_mask, disp_mask, acc_mask, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                            verbose=i < 10, retraw=True,
+                                                            **render_kwargs_test_mask)
+                rgb_mask = torch.mean(rgb_mask, -1).unsqueeze(-1)
+                loss_teacher = torch.sum(extras_student['point_error'][0] * rgb_mask) / (torch.sum(rgb_mask) + 1e-6)
+                loss_teacher += torch.sum(extras_student['point_error0'][0] * rgb_mask) / (torch.sum(rgb_mask) + 1e-6)
                 loss += loss_teacher * args.w_loss_teacher
 
                 if args.use_teacher_nerf_second:
+                    pass
                     loss_teacher_second = extras_student['point_error_second'][0] + extras_student['point_error0_second'][0]
                     loss += loss_teacher_second * args.w_loss_teacher_second
             else:
