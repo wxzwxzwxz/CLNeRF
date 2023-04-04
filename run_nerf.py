@@ -276,19 +276,15 @@ def create_nerf(args, ckpt_path=None):
     # Partly finetune
     if args.finetune_last_layer_only == True:
         for z in model.named_parameters():
-            if 'alpha_linear' in z[0] or 'rgb_linear' in z[0]:
-                # z[1].requires_grad = True
+            if 'alpha_linear' in z[0] or 'rgb_linear' in z[0] or 'views_linears' in z[0]:
                 z[1].requires_grad_(True)
             else:
-                # z[1].requires_grad = False
                 z[1].requires_grad_(False)
     elif args.finetune_last_layers > 0:
         for z in model.named_parameters():
             if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
-                # z[1].requires_grad = True
                 z[1].requires_grad_(True)
             else:
-                # z[1].requires_grad = False
                 z[1].requires_grad_(False)
 
     # grad_vars = list(model.parameters())
@@ -303,19 +299,15 @@ def create_nerf(args, ckpt_path=None):
         # Partly finetune
         if args.finetune_last_layer_only == True:
             for z in model_fine.named_parameters():
-                if 'alpha_linear' in z[0] or 'rgb_linear' in z[0]:
-                    # z[1].requires_grad = True
+                if 'alpha_linear' in z[0] or 'rgb_linear' in z[0] or 'views_linears' in z[0]:
                     z[1].requires_grad_(True)
                 else:
-                    # z[1].requires_grad = False
                     z[1].requires_grad_(False)
         elif args.finetune_last_layers > 0:
             for z in model_fine.named_parameters():
                 if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
-                    # z[1].requires_grad = True
                     z[1].requires_grad_(True)
                 else:
-                    # z[1].requires_grad = False
                     z[1].requires_grad_(False)
                 
         # grad_vars += list(model_fine.parameters())
