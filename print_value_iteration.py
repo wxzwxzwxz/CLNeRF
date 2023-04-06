@@ -42,3 +42,4 @@ for render_dir in render_list:
             line = line.split('[')[1].split(']')[0]
             print(line, end=', ')
 print()
+print()
