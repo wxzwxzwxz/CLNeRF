@@ -1,6 +1,6 @@
-expname = blendswap_whitehouse_origin_v9
+expname = blendswap_whitehouse_origin_v7v9
 basedir = ./logs
-datadir = ./data/blendswap_whitehouse_origin_v9
+datadir = ./data/blendswap_whitehouse_origin_v7v9
 dataset_type = blender
 
 no_batching = True

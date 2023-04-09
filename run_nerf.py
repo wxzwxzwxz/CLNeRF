@@ -360,6 +360,18 @@ def create_nerf(args, ckpt_path=None):
         utils.set_requires_grad(model_fine, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
 
     ##########################
+    if args.lora:
+        print('usingh LoRA')
+        lora.mark_only_lora_as_trainable(model)
+        lora.mark_only_lora_as_trainable(model_fine)
+        print("Tuning only:")
+        for n,v in model.named_parameters():
+            if v.requires_grad ==True:
+                print(n)
+        if model_fine is not None:
+            for n,v in model_fine.named_parameters():
+                if v.requires_grad ==True:
+                    print(n)
     if args.bitfit:
         # freeze model params except bias
         _ignores=[]
@@ -916,6 +928,10 @@ def config_parser():
     parser.add_argument("--finetune_last_layer_only", type=bool, default=False)
     parser.add_argument("--spherical_radius", type=float, default=4.0)
     parser.add_argument("--bitfit", action='store_true')
+    parser.add_argument("--lora", action='store_true')
+    parser.add_argument("--lora_rank", type=int, default=16)
+    parser.add_argument('--lora_layers', nargs='+', help='<Required> Set flag', default=None)
+    parser.add_argument("--use_adaptor", action='store_true')
                         
     return parser
 

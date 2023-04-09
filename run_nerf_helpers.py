@@ -4,6 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+#for LoRA
+import loralib as lora
+
 
 # Misc
 img2mse = lambda x, y : torch.mean((x - y) ** 2)
@@ -78,9 +81,33 @@ class NeRF(nn.Module):
         self.skips = skips
         self.use_viewdirs = use_viewdirs
         
-        self.pts_linears = nn.ModuleList(
-            [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
-        
+        if args.lora:
+            assert args.lora_layers is not None, 'when using LoRA, lora_layers must be set'
+            print("using LoRA")
+            rank=args.lora_rank
+            if 'pts_linears.0' in args.lora_layers:
+                inputs=[lora.Linear(input_ch, W,r=rank)]
+            else:
+                inputs=[nn.Linear(input_ch, W)]
+
+
+            middle_layers=[]
+            for i in range(1,D):
+                if i-1 not in self.skips:
+                    _in_ch=W
+                else:
+                    _in_ch=W + input_ch
+                if 'pts_linears.'+str(i) in args.lora_layers: #and 'pts_linears.'+str(i) != 'pts_linears.0':
+                    middle_layers.append(lora.Linear(_in_ch, W,r=rank))
+                else:
+                    middle_layers.append(nn.Linear(_in_ch, W))
+
+            self.pts_linears = nn.ModuleList(
+            inputs + middle_layers)
+        else:
+            self.pts_linears = nn.ModuleList(
+                [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
+            
         ### Implementation according to the official code release (https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L104-L105)
         self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
 
@@ -89,7 +116,6 @@ class NeRF(nn.Module):
         #     [nn.Linear(input_ch_views + W, W//2)] + [nn.Linear(W//2, W//2) for i in range(D//2)])
         
         self.args = args
-        # if self.args.no_viewdirs_distill:
         if self.args.add_dino:
             self.emb_linear_penultimate = nn.Linear(W, W//2)
 
