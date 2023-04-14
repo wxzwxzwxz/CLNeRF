@@ -6,7 +6,6 @@ import json
 import torch.nn.functional as F
 import cv2
 from utils import load_features
-import random
 
 trans_t = lambda t : torch.Tensor([
     [1,0,0,0],
@@ -38,32 +37,11 @@ def pose_spherical(theta, phi, radius):
 def load_blender_data(args, basedir, half_res=False, testskip=1, 
                     load_imgs=True, ori_H=None, ori_W=None, ext='.png',
                     transforms_train=None, transforms_val=None, transforms_test=None, trainskip=1, spherical_radius=4.0,
-                    transforms_train_ratio=None):
+                    transforms_train_auxiliary=None):
     splits = ['train', 'val', 'test']
     metas = {}
-
     for s in splits:
-        if s == 'train' and transforms_train is not None and isinstance(transforms_train, list):
-            output_dict = None
-            for idx in range(len(transforms_train)):
-                # print(transforms_train[idx])
-                with open(os.path.join(basedir, transforms_train[idx]), 'r') as fp:
-                    cur_dict = json.load(fp)
-                    if transforms_train_ratio is not None and int(transforms_train_ratio[idx]) > 0:
-                        cur_dict["frames"] = random.sample(cur_dict["frames"], int(transforms_train_ratio[idx]))
-                    
-                    if output_dict is None:
-                        output_dict = cur_dict
-                    else:
-                        output_dict["frames"] += cur_dict["frames"]
-
-                # print(output_dict)
-                # input()
-            # print(output_dict)
-            # input()
-            metas[s] = output_dict
-            continue
-        elif s == 'train' and transforms_train is not None: 
+        if s == 'train' and transforms_train is not None: 
             json_file = transforms_train
         elif s == 'val' and transforms_val is not None: 
             json_file = transforms_val
@@ -159,6 +137,9 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             fts_train = None
             fts_val = None
             fts_test = None
+        
+        if transforms_train_auxiliary is not None:
+            pass
 
         return imgs, poses, render_poses, [H, W, focal], i_split, all_paths, ori_H, ori_W, fts_train, fts_test
     else:

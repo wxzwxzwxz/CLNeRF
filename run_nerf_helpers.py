@@ -90,7 +90,6 @@ class NeRF(nn.Module):
             else:
                 inputs=[nn.Linear(input_ch, W)]
 
-
             middle_layers=[]
             for i in range(1,D):
                 if i-1 not in self.skips:
@@ -103,7 +102,7 @@ class NeRF(nn.Module):
                     middle_layers.append(nn.Linear(_in_ch, W))
 
             self.pts_linears = nn.ModuleList(
-            inputs + middle_layers)
+                inputs + middle_layers)
         else:
             self.pts_linears = nn.ModuleList(
                 [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
@@ -120,14 +119,29 @@ class NeRF(nn.Module):
             self.emb_linear_penultimate = nn.Linear(W, W//2)
 
         if use_viewdirs:
-            self.feature_linear = nn.Linear(W, W)
-            self.alpha_linear = nn.Linear(W, 1)
-            self.rgb_linear = nn.Linear(W//2, 3)
+            if args.lora and 'feature_linear' in args.lora_layers:
+                self.feature_linear = lora.Linear(W, W, r=rank)
+            else:
+                self.feature_linear = nn.Linear(W, W)
+
+            if args.lora and 'alpha_linear' in args.lora_layers:
+                self.alpha_linear = lora.Linear(W, 1, r=rank)
+            else:
+                self.alpha_linear = nn.Linear(W, 1)
+
+            if args.lora and 'rgb_linear' in args.lora_layers:
+                self.rgb_linear = lora.Linear(W//2, 3, r=rank)
+            else:
+                self.rgb_linear = nn.Linear(W//2, 3)
 
             if self.args.add_dino:
+                pass
                 self.emb_linear = nn.Linear(W//2, 64)
         else:
-            self.output_linear = nn.Linear(W, output_ch)
+            if args.lora and 'output_linear' in args.lora_layers:
+                self.output_linear = lora.Linear(W, output_ch, r=rank)
+            else:
+                self.output_linear = nn.Linear(W, output_ch)
 
     def forward(self, x):
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
