@@ -3,6 +3,7 @@ import sys
 import numpy as np 
 
 algo = sys.argv[1]
+iter = sys.argv[2]
 
 input_dir = os.path.join('logs', algo)
 # model_list = os.listdir(input_dir)
@@ -10,12 +11,12 @@ input_dir = os.path.join('logs', algo)
 
 # render_list = os.listdir(input_dir)
 # render_list = sorted(render_list)
-print(algo)
+# print(algo)
 
-test_list = ['renderonly_test_199999']
-test_list += ['renderonly_test_path_199999_path']
-test_list += ['renderonly_test_sofa1_199999_sofa1', 'renderonly_test_sofa2_199999_sofa2', 'renderonly_test_sofa3_199999_sofa3']
-test_list += ['renderonly_test_table_199999_table']
+# test_list = ['renderonly_test_199999']
+# test_list += ['renderonly_test_path_199999_path']
+# test_list += ['renderonly_test_sofa1_199999_sofa1', 'renderonly_test_sofa2_199999_sofa2', 'renderonly_test_sofa3_199999_sofa3']
+# test_list += ['renderonly_test_table_199999_table']
 
 # test_list += ['renderonly_test_399999']
 # test_list += ['renderonly_test_path_399999_path']
@@ -23,11 +24,10 @@ test_list += ['renderonly_test_table_199999_table']
 # test_list += ['renderonly_test_table_399999_table']
 # print('20w iters...')
 
-test_list += ['renderonly_test_209999']
-test_list += ['renderonly_test_path_209999_path']
-test_list += ['renderonly_test_sofa1_209999_sofa1', 'renderonly_test_sofa2_209999_sofa2', 'renderonly_test_sofa3_209999_sofa3']
-test_list += ['renderonly_test_table_209999_table']
-print('1w iters...')
+test_list = ['renderonly_test_path_table_wcup_'+str(iter)]
+test_list += ['renderonly_test_sofa1_table_wcup_'+str(iter), 'renderonly_test_sofa2_table_wcup_'+str(iter), 'renderonly_test_sofa3_table_wcup_'+str(iter)]
+test_list += ['renderonly_test_table_wcup_'+str(iter)]
+# print('1w iters...')
 
 for render_dir in test_list:
     psnr_path = os.path.join(input_dir, render_dir, 'psnr.txt')
@@ -41,6 +41,6 @@ for render_dir in test_list:
         for line in f:
             line = line.strip()
             line = line.split('[')[1].split(']')[0]
-            print(line, end=', ')
-print()
+            print(line, end='\t')
+# print()
 print()

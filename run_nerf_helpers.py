@@ -6,10 +6,12 @@ import numpy as np
 
 #for LoRA
 import loralib as lora
-
+from adapter import bottle_neck_adapter
+from expert import *
 
 # Misc
 img2mse = lambda x, y : torch.mean((x - y) ** 2)
+img2bce = nn.BCELoss()
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
 
@@ -107,6 +109,32 @@ class NeRF(nn.Module):
             self.pts_linears = nn.ModuleList(
                 [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
             
+        if args.adapter_layers:
+            # self.adapters={}
+            adapters_list = []
+            for i in args.adapter_layers:
+                # if int(i)+1 in self.skips:
+                #     self.pts_linears.insert(int(i)+1,bottle_neck_adapter(out_dims=W + input_ch))
+                # if
+                # self.adapters[i] = bottle_neck_adapter()
+                adapters_list.append(bottle_neck_adapter(in_dims=256, out_dims=256, bottle_neck_dim=args.bottle_neck_dim))
+            
+            self.adapters = nn.ModuleList(adapters_list)
+            
+            #record the adapter layer for skip nonlinearity
+            # self.adapter_index=[]
+            # for i,layer in enumerate(self.pts_linears):
+            #     if 'adapter' in layer._get_name():
+            #         self.adapter_index.append(i)
+            # print('using adapter',self.adapters)
+
+        if args.use_expert:
+            if args.expert_version == 'v1':
+                self.expert = expert(D=args.expert_d, W=args.expert_w, args=args)
+            elif args.expert_version == 'v2':
+                # d + 2
+                self.expert = expert_v2(D=args.expert_d, W=args.expert_w, input_dim=W, output_dim=W, args=args)
+
         ### Implementation according to the official code release (https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L104-L105)
         self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
 
@@ -143,28 +171,72 @@ class NeRF(nn.Module):
             else:
                 self.output_linear = nn.Linear(W, output_ch)
 
-    def forward(self, x):
+    def forward(self, x, return_feat=False):
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
         h = input_pts
-        for i, l in enumerate(self.pts_linears):
+
+        h = self.pts_linears[0](h)
+        h = F.relu(h)
+        if return_feat == True:
+            output_dict = dict()
+            output_dict['pts_linears_0'] = h
+
+        if self.args.use_expert:
+            expert_h = h
+            expert_h = self.expert(expert_h)
+
+        for i in range(1, len(self.pts_linears)):
             h = self.pts_linears[i](h)
+
+            if self.args.adapter_layers is not None and str(i) in self.args.adapter_layers:
+                if self.args.adapter_version == 0:
+                    # new block, residual, best
+                    h = self.adapters[i](h)
+                elif self.args.adapter_version == 1:
+                    # new block v2, residual
+                    h = F.relu(h)
+                    h = self.adapters[i](h)
+                elif self.args.adapter_version == 2:
+                    # residual
+                    residual = self.adapters[i](h)
+                    h = h.add(residual)
+                elif self.args.adapter_version == 3:
+                    # residual v2
+                    h = F.relu(h)
+                    residual = self.adapters[i](h)
+                    h = h.add(residual)
+
             h = F.relu(h)
+            if return_feat == True:
+                output_dict['pts_linears_'+str(i)] = h
+
             if i in self.skips:
                 h = torch.cat([input_pts, h], -1)
+        
+        if self.args.use_expert:
+            h += expert_h
 
         if self.use_viewdirs:
             alpha = self.alpha_linear(h)
             feature = self.feature_linear(h)
+
+            if return_feat == True:
+                output_dict['alpha_linear'] = alpha
+                output_dict['feature_linear'] = feature
+
             h = torch.cat([feature, input_views], -1)
         
             for i, l in enumerate(self.views_linears):
                 h = self.views_linears[i](h)
                 h = F.relu(h)
 
+                if return_feat == True:
+                    output_dict['views_linears_'+str(i)] = h
+
             rgb = self.rgb_linear(h)
 
             if self.args.add_dino:
-                # if self.args.no_viewdirs_distill:
+                pass
                 h = self.emb_linear_penultimate(feature)
                 ft = self.emb_linear(h)
                 outputs = torch.cat([rgb, alpha, ft], -1)
@@ -173,7 +245,10 @@ class NeRF(nn.Module):
         else:
             outputs = self.output_linear(h)
 
-        return outputs    
+        if return_feat == True:
+            return outputs, output_dict
+        else:
+            return outputs # , None   
 
     def load_weights_from_keras(self, weights):
         assert self.use_viewdirs, "Not implemented if use_viewdirs=False"

@@ -28,7 +28,7 @@ config = args.config
 args.n_gpus = torch.cuda.device_count()
 
 # Create nerf model
-_, render_kwargs_test, _, _, _ = run_nerf.create_nerf(args)
+_, render_kwargs_test, _, _, _, _ = run_nerf.create_nerf(args)
 
 if args.near:
     near = args.near
@@ -94,7 +94,7 @@ with torch.no_grad():
     fn = lambda i0, i1 : net_fn(flat[i0:i1,None,:].to(device), viewdirs=torch.zeros_like(flat[i0:i1]).to(device), network_fn=render_kwargs_test['network_fine'])
     # chunk = 1024*64
     chunk = 2048*640
-    raw = np.concatenate([fn(i, i+chunk).cpu().numpy() for i in range(0, flat.shape[0], chunk)], 0)
+    raw = np.concatenate([fn(i, i+chunk)[0].cpu().numpy() for i in range(0, flat.shape[0], chunk)], 0)
     raw = np.reshape(raw, list(sh[:-1]) + [-1])
     sigma = np.maximum(raw[...,-1], 0.)
     

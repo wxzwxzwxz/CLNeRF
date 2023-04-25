@@ -38,7 +38,7 @@ def pose_spherical(theta, phi, radius):
 def load_blender_data(args, basedir, half_res=False, testskip=1, 
                     load_imgs=True, ori_H=None, ori_W=None, ext='.png',
                     transforms_train=None, transforms_val=None, transforms_test=None, trainskip=1, spherical_radius=4.0,
-                    transforms_train_ratio=None):
+                    transforms_train_ratio=None, transforms_test_ratio=None):
     splits = ['train', 'val', 'test']
     metas = {}
 
@@ -63,6 +63,37 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             # input()
             metas[s] = output_dict
             continue
+        elif s == 'test' and transforms_test is not None and args.transforms_test_key is not None:
+            output_dict = dict()
+            with open(os.path.join(basedir, transforms_test[idx]), 'r') as fp:
+                cur_dict = json.load(fp)
+                for key in cur_dict:
+                    if "frames" not in key:
+                        output_dict[key] = cur_dict[key]
+                output_dict["frames"] = list()
+                for frame_dict in cur_dict["frames"]:
+                    if args.transforms_test_key in frame_dict["file_path"]:
+                        output_dict["frames"].append(frame_dict)
+
+                if transforms_test_ratio is not None:
+                    output_dict["frames"] = random.sample(output_dict["frames"], int(transforms_test_ratio))
+            
+            metas[s] = output_dict
+            continue
+        elif s == 'test' and transforms_test is not None and isinstance(transforms_test, list):
+            output_dict = None
+            for idx in range(len(transforms_test)):
+                with open(os.path.join(basedir, transforms_test[idx]), 'r') as fp:
+                    cur_dict = json.load(fp)
+                    if transforms_test_ratio is not None and int(transforms_test_ratio[idx]) > 0:
+                        cur_dict["frames"] = random.sample(cur_dict["frames"], int(transforms_test_ratio[idx]))
+                    
+                    if output_dict is None:
+                        output_dict = cur_dict
+                    else:
+                        output_dict["frames"] += cur_dict["frames"]
+            metas[s] = output_dict
+            continue
         elif s == 'train' and transforms_train is not None: 
             json_file = transforms_train
         elif s == 'val' and transforms_val is not None: 
@@ -71,7 +102,7 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             json_file = transforms_test
         else:
             json_file = 'transforms_{}.json'.format(s)
-            
+        
         with open(os.path.join(basedir, json_file), 'r') as fp:
             metas[s] = json.load(fp)
 
@@ -95,15 +126,18 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
                 
             for frame in meta['frames'][::skip]:
                 fname = os.path.join(basedir, frame['file_path'] + ext)
+                # print(fname)
                 imgs.append(imageio.imread(fname))
                 poses.append(np.array(frame['transform_matrix']))
                 # paths.append(frame['file_path'] + ext)
                 all_paths.append(frame['file_path'] + ext)
+
             imgs = (np.array(imgs) / 255.).astype(np.float32) # keep all 4 channels (RGBA)
             poses = np.array(poses).astype(np.float32)
             counts.append(counts[-1] + imgs.shape[0])
             all_imgs.append(imgs)
             all_poses.append(poses)
+            
             # all_paths.append(paths)
         
         i_split = [np.arange(counts[i], counts[i+1]) for i in range(3)]

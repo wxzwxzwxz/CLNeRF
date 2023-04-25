@@ -34,23 +34,19 @@ def batchify(fn, chunk, return_feat=False):
     def ret(inputs):
         if return_feat == True:
             outputs = None
-            outputs_dict = dict()
+            outputs_dict_list = list()
 
             for i in range(0, inputs.shape[0], chunk):
                 output, output_dict = fn(inputs[i:i+chunk], return_feat=return_feat)
-                # outputs_dict_list.append(output_dict)
+                outputs_dict_list.append(output_dict)
                 if outputs is None:
                     outputs = output
-                    outputs_dict.update(output_dict)
                 else:
                     outputs = torch.cat([outputs, output], 0)
-                    for key in output_dict:
-                        outputs_dict[key] = torch.cat([outputs_dict[key], output_dict[key]], 0)
+            return outputs, outputs_dict_list
 
-            # return outputs, outputs_dict_list
-            return outputs, outputs_dict
         else:
-            return torch.cat([fn(inputs[i:i+chunk]) for i in range(0, inputs.shape[0], chunk)], 0), None
+            return torch.cat([fn(inputs[i:i+chunk]) for i in range(0, inputs.shape[0], chunk)], 0)
     return ret
 
 
@@ -67,17 +63,21 @@ def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64, 
         embedded = torch.cat([embedded, embedded_dirs], -1)
 
     if return_feat == True:
-        outputs_flat, outputs_dict = batchify(fn, netchunk, return_feat=return_feat)(embedded)
+        # print('embed ', embedded.shape)
+        outputs_flat, outputs_dict_list = batchify(fn, netchunk, return_feat=return_feat)(embedded)
         
-        for key in outputs_dict:
-            outputs_dict[key] = torch.reshape(outputs_dict[key], list(inputs.shape[:-1]) + [outputs_dict[key].shape[-1]])
-
+        for output_dict in outputs_dict_list:
+            for key in output_dict:
+                # print(output_dict[key].shape, list(inputs.shape[:-1]) + [output_dict[key].shape[-1]])
+                output_dict[key] = torch.reshape(output_dict[key], list(inputs.shape[:-1]) + [output_dict[key].shape[-1]])
+                
         outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
-        return outputs, outputs_dict
+        return outputs, outputs_dict_list
     else:
-        outputs_flat, _ = batchify(fn, netchunk)(embedded)
+        outputs_flat = batchify(fn, netchunk)(embedded)
         outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
-        return outputs, None
+        return outputs
+
 
 def batchify_rays(rays_flat, chunk=1024*32, use_point_mask=False, 
                 render_kwargs_test_teacher=None, 
@@ -268,7 +268,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
                 filename = os.path.join(savedir, '{:05d}.jpg'.format(i))
             
             cur_h, cur_w, _ = rgb8.shape
-            # rgb8 =cv2.putText(img=np.copy(rgb8), text=str(cur_psnr), org=(cur_w-cur_w//4, cur_h-30), fontFace=3,  fontScale=2, color=(255,0,0), thickness=2)
+            rgb8 =cv2.putText(img=np.copy(rgb8), text=str(cur_psnr), org=(cur_w-cur_w//4, cur_h-30), fontFace=3,  fontScale=2, color=(255,0,0), thickness=2)
 
             imageio.imwrite(filename, rgb8)
             # print(filename)
@@ -301,7 +301,6 @@ def check_tuning_params(model_list):
         for n,v in model.named_parameters():
             if v.requires_grad ==True:
                 print(n)
-
 def ft(model,ft_layers):
     #selective FT
     for n,v in model.named_parameters():
@@ -314,33 +313,6 @@ def bitfit(model,keeps,bitfit_layers):
     for n,v in model.named_parameters():
         if (keeps in n) and any([l in n for l in bitfit_layers]):
             v.requires_grad_(True)
-
-def set_grad_false_except_keyword(model, model_fine, keyword_list):
-    # print(keyword_list)
-    for n,v in model.named_parameters():
-        v.requires_grad_(False)
-
-    for n,v in model.named_parameters():
-        if any([l in n for l in keyword_list]):
-            v.requires_grad_(True)
-    
-    if model_fine is not None:
-        for n,v in model_fine.named_parameters():
-            v.requires_grad_(False)
-
-        for n,v in model_fine.named_parameters():
-            if any([l in n for l in keyword_list]):
-                v.requires_grad_(True)
-
-def set_grad_true_in_keyword(model, model_fine, keyword_list):
-    for n,v in model.named_parameters():
-        if any([l in n for l in keyword_list]):
-            v.requires_grad_(True)
-
-    if model_fine is not None:
-        for n,v in model_fine.named_parameters():
-            if any([l in n for l in keyword_list]):
-                v.requires_grad_(True)
 
 def create_nerf(args, ckpt_path=None):
     """Instantiate NeRF's MLP model.
@@ -357,20 +329,104 @@ def create_nerf(args, ckpt_path=None):
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
                  input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
 
+    # if args.finetune_last_layers > 0:
+    #     for i in range(args.finetune_last_layers):
+    #          = model.pts_linears[-i].
+    #         # utils.set_requires_grad(model, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
+    
+    # Partly finetune
+    if args.finetune_last_layer_only == True:
+        for z in model.named_parameters():
+            if 'alpha_linear' in z[0] or 'rgb_linear' in z[0] or 'views_linears' in z[0]:
+                z[1].requires_grad_(True)
+            else:
+                z[1].requires_grad_(False)
+    elif args.finetune_last_layers > 0:
+        for z in model.named_parameters():
+            if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
+                z[1].requires_grad_(True)
+            else:
+                z[1].requires_grad_(False)
+
+    # grad_vars = list(model.parameters())
+    grad_vars = [z[1] for z in model.named_parameters() if 'emb_linear' not in z[0] and z[1].requires_grad == True]
+    
     model_fine = None
     if args.N_importance > 0:
         model_fine = NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
                           input_ch=input_ch, output_ch=output_ch, skips=skips,
                           input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
-    
-    # partly finetune
-    # only finetune adaptor
+
+        # Partly finetune
+        if args.finetune_last_layer_only == True:
+            for z in model_fine.named_parameters():
+                if 'alpha_linear' in z[0] or 'rgb_linear' in z[0] or 'views_linears' in z[0]:
+                    z[1].requires_grad_(True)
+                else:
+                    z[1].requires_grad_(False)
+        elif args.finetune_last_layers > 0:
+            for z in model_fine.named_parameters():
+                if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
+                    z[1].requires_grad_(True)
+                else:
+                    z[1].requires_grad_(False)
+                
+        # grad_vars += list(model_fine.parameters())
+        grad_vars += [z[1] for z in model_fine.named_parameters() if 'emb_linear' not in z[0] and z[1].requires_grad == True]
+
+    network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
+                                                                embed_fn=embed_fn,
+                                                                embeddirs_fn=embeddirs_fn,
+                                                                netchunk=args.netchunk,
+                                                                return_feat=args.return_feat)
+
+    # Create optimizer
+    optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
+
+    start = 0
+    basedir = args.basedir
+    expname = args.expname
+
+    ##########################
+
+    # Load checkpoints
+    if ckpt_path is not None:
+        ckpts = [ckpt_path]
+    elif args.ft_path is not None and args.ft_path!='None':
+        ckpts = [args.ft_path]
+    else:
+        ckpts = [os.path.join(basedir, expname, f) for f in sorted(os.listdir(os.path.join(basedir, expname))) if 'tar' in f]
+
+    # print('Found ckpts', ckpts)
+    if len(ckpts) > 0 and not args.no_reload:
+        ckpt_path = ckpts[-1]
+        print('Reloading from', ckpt_path)
+        ckpt = torch.load(ckpt_path)
+
+        start = ckpt['global_step']
+        try:
+            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        except Exception as e:
+            print(e)
+
+        # Load model
+        model.load_state_dict(ckpt['network_fn_state_dict'], strict=False)
+        if model_fine is not None:
+            model_fine.load_state_dict(ckpt['network_fine_state_dict'], strict=False)
+
+    if args.add_dino:
+        assert args.ft_path is not None, 'for now use only pre-trained model'
+        # add emb parameters after loading optimizer, freeze for 1000 iter
+        utils.initialize_optimizer(optimizer, model, model_fine)
+        utils.set_requires_grad(model, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
+        utils.set_requires_grad(model_fine, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
+
+    ##########################
     if args.lora:
         print('usingh LoRA')
         lora.mark_only_lora_as_trainable(model)
         lora.mark_only_lora_as_trainable(model_fine)
         print("Tuning only:")
-
         for n,v in model.named_parameters():
             if v.requires_grad ==True:
                 print(n)
@@ -378,29 +434,24 @@ def create_nerf(args, ckpt_path=None):
             for n,v in model_fine.named_parameters():
                 if v.requires_grad ==True:
                     print(n)
-    elif args.adapter_layers:
-        keyword_list = ['adapters']
-        # keyword_list += ['feature_linear', 'alpha_linear', 'rgb_linear', 'pts_linears.7'] # v2
-        # keyword_list += ['feature_linear', 'alpha_linear', 'rgb_linear'] # v3
-        # keyword_list += ['alpha_linear'] # v4
+    
+    if args.adapter_layers:
+        for i in args.adapter_layers:
+            self.adapters[i]=bottle_neck_adapter()
+            
         
-        set_grad_false_except_keyword(model, model_fine, keyword_list)
-    elif args.use_expert:
-        keyword_list = ['expert']
-        set_grad_false_except_keyword(model, model_fine, keyword_list)
-    elif args.bitfit:
+    if args.bitfit:
         # freeze model params except bias
         _ignores=[]
         _keeps='bias'
-        ft_layers=args.ft_layers #['pts_linears.7','alpha_linear','rgb_linear','feature_linear','views_linears']
-        bitfit_layers=args.bitfit_layers #['pts_linears.0','pts_linears.1','pts_linears.2','pts_linears.3',
+        ft_layers=args.ft_layers#['pts_linears.7','alpha_linear','rgb_linear','feature_linear','views_linears']
+        bitfit_layers=args.bitfit_layers#['pts_linears.0','pts_linears.1','pts_linears.2','pts_linears.3',
                        #'pts_linears.4','pts_linears.5','pts_linears.6']
-
         #freeze all
         for n,v in model.named_parameters():
             v.requires_grad_(False)
         
-        bitfit(model,_keeps,bitfit_layers) # bitfit for model
+        bitfit(model,_keeps,bitfit_layers)#bitfit for model
         if ft_layers is not None:
             ft(model,ft_layers) 
         
@@ -416,136 +467,32 @@ def create_nerf(args, ckpt_path=None):
             #selective FT
             if ft_layers is not None:
                 ft(model_fine,ft_layers) 
+
+
+        # if model_fine is not None:
+        #     for n,v in model_fine.named_parameters():
+        #         if (_keeps not in n) and ('pts_linears' in n):
+        #             v.requires_grad_(False)
+        
+        
+
+        print("Tuning only:")
+        check_tuning_params([model,model_fine])
+        # for n,v in model.named_parameters():
+        #     if v.requires_grad ==True:
+        #         print(n)
+        # if model_fine is not None:
+        #     for n,v in model_fine.named_parameters():
+        #         if v.requires_grad ==True:
+        #             print(n)
+
     
-    # finetune several layers
-    if args.finetune_last_layer_only == True:
-        keyword_list = ['alpha_linear', 'rgb_linear', 'views_linears']
-        set_grad_true_in_keyword(model, model_fine, keyword_list)
-
-    elif args.finetune_last_layers > 0:
-        keyword_list = ['alpha_linear', 'rgb_linear', 'views_linears']
-        set_grad_true_in_keyword(model, model_fine, keyword_list)
-        for z in model.named_parameters():
-            if 'pts_linears' in z[0] and int(z[0].split('.')[1]) > 7 - args.finetune_last_layers:
-                set_grad_true_in_keyword(model, model_fine, [z[0]])
-            
-    if not args.render_only:
-        check_tuning_params([model, model_fine])
-
-    # Create optimizer
-    if args.adapter_layers:
-        # grad_vars = list(model.parameters())
-        grad_vars = [z[1] for z in model.named_parameters() if 'adapters' not in z[0] and z[1].requires_grad == True]
-        if args.N_importance > 0: 
-            # grad_vars += list(model_fine.parameters())
-            grad_vars += [z[1] for z in model_fine.named_parameters() if 'adapters' not in z[0] and z[1].requires_grad == True]
-        
-        if len(grad_vars) != 0:
-            optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
-        else:
-            optimizer = None
-
-        grad_vars_second = [z[1] for z in model.named_parameters() if 'adapters' in z[0] and z[1].requires_grad == True]
-        if args.N_importance > 0: 
-            # grad_vars += list(model_fine.parameters())
-            grad_vars_second += [z[1] for z in model_fine.named_parameters() if 'adapters' in z[0] and z[1].requires_grad == True]
-        optimizer_second = torch.optim.Adam(params=grad_vars_second, lr=args.lrate_adaptor, betas=(0.9, 0.999))
-    elif args.use_expert:
-        grad_vars = [z[1] for z in model.named_parameters() if 'expert' not in z[0] and z[1].requires_grad == True]
-        if args.N_importance > 0: 
-            grad_vars += [z[1] for z in model_fine.named_parameters() if 'expert' not in z[0] and z[1].requires_grad == True]
-        
-        if len(grad_vars) != 0:
-            optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
-        else:
-            optimizer = None
-
-        grad_vars_second = [z[1] for z in model.named_parameters() if 'expert' in z[0] and z[1].requires_grad == True]
-        if args.N_importance > 0: 
-            grad_vars_second += [z[1] for z in model_fine.named_parameters() if 'expert' in z[0] and z[1].requires_grad == True]
-        optimizer_second = torch.optim.Adam(params=grad_vars_second, lr=args.lrate_adaptor, betas=(0.9, 0.999))
-    else:
-        # grad_vars = list(model.parameters())
-        grad_vars = [z[1] for z in model.named_parameters() if 'emb_linear' not in z[0] and z[1].requires_grad == True]
-        if args.N_importance > 0: 
-            # grad_vars += list(model_fine.parameters())
-            grad_vars += [z[1] for z in model_fine.named_parameters() if 'emb_linear' not in z[0] and z[1].requires_grad == True]
-        optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
-        optimizer_second = None
-
-    start = 0
-    basedir = args.basedir
-    expname = args.expname
-
-    ##########################
-
-    # Load checkpoints
-    if ckpt_path is not None:
-        ckpts = [ckpt_path]
-    elif args.ft_path is not None and args.ft_path!='None':
-        ckpts = [args.ft_path]
-    else:
-        ckpts = [os.path.join(basedir, expname, f) for f in sorted(os.listdir(os.path.join(basedir, expname))) if 'tar' in f and 'adaptor.tar' not in f]
-
-    # print('Found ckpts', ckpts)
-    if len(ckpts) > 0 and not args.no_reload:
-        ckpt_path = ckpts[-1]
-        print('Reloading from', ckpt_path)
-        ckpt = torch.load(ckpt_path)
-
-        start = ckpt['global_step']
-        try:
-            if optimizer is not None:
-                optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-
-            # if args.adapter_layers:
-            #     optimizer_second.load_state_dict(ckpt['optimizer_state_dict'])
-            # elif args.use_expert:
-            #     optimizer_second.load_state_dict(ckpt['optimizer_state_dict'])
-        except Exception as e:
-            pass
-            # print(e)
-
-        # Load model
-        model.load_state_dict(ckpt['network_fn_state_dict'], strict=False)
-        if model_fine is not None:
-            model_fine.load_state_dict(ckpt['network_fine_state_dict'], strict=False)
-
-        if args.adapter_layers:
-            try:
-                ckpt_adaptor = torch.load(ckpt_path.replace('.tar', '_adaptor.tar'))
-                model.adapters.load_state_dict(ckpt_adaptor['network_fn_adapters_state_dict'], strict=False)
-                if model_fine is not None:
-                    model_fine.adapters.load_state_dict(ckpt_adaptor['network_fine_adapters_state_dict'], strict=False)
-            except Exception as e:
-                print(e)
-        elif args.use_expert:
-            try:
-                ckpt_expert = torch.load(ckpt_path.replace('.tar', '_expert.tar'))
-                model.expert.load_state_dict(ckpt_expert['network_fn_expert_state_dict'], strict=False)
-                if model_fine is not None:
-                    model_fine.expert.load_state_dict(ckpt_expert['network_fine_expert_state_dict'], strict=False)
-            except Exception as e:
-                print(e)
-
-    if args.add_dino:
-        assert args.ft_path is not None, 'for now use only pre-trained model'
-        # add emb parameters after loading optimizer, freeze for 1000 iter
-        utils.initialize_optimizer(optimizer, model, model_fine)
-        utils.set_requires_grad(model, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
-        utils.set_requires_grad(model_fine, keys_excl=['emb_linear', 'emb_linear_penultimate'], requires_grad=False)
-
 
     # compute params
     param_count = count_param(model)
     param_count += count_param(model_fine)
     print('Total params:', param_count)
 
-    network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
-                                                                embed_fn=embed_fn,
-                                                                embeddirs_fn=embeddirs_fn,
-                                                                netchunk=args.netchunk,
-                                                                return_feat=args.return_feat)
     render_kwargs_train = {
         'network_query_fn' : network_query_fn,
         'perturb' : args.perturb,
@@ -568,7 +515,7 @@ def create_nerf(args, ckpt_path=None):
     render_kwargs_test['perturb'] = False
     render_kwargs_test['raw_noise_std'] = 0.
 
-    return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, optimizer_second
+    return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer
 
 def create_mask_nerf(args, ckpt_path):
     """Instantiate NeRF's MLP model.
@@ -828,15 +775,15 @@ def render_rays(ray_batch,
     # input()
 
 #     raw = run_network(pts)
-    raw, feat_dict = network_query_fn(pts, viewdirs, network_fn)
+    raw = network_query_fn(pts, viewdirs, network_fn)
 
     if use_point_mask:
         with torch.no_grad():
-            raw_teacher, feat_dict_teacher = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fn'])
-            raw_mask, _ = network_query_fn(pts, viewdirs, render_kwargs_test_mask['network_fn'])
+            raw_teacher = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fn'])
+            raw_mask = network_query_fn(pts, viewdirs, render_kwargs_test_mask['network_fn'])
             
             if render_kwargs_test_teacher_second is not None:
-                raw_teacher_second, feat_dict_teacher_second = network_query_fn(pts, viewdirs, render_kwargs_test_teacher_second['network_fn'])
+                raw_teacher_second = network_query_fn(pts, viewdirs, render_kwargs_test_teacher_second['network_fn'])
 
             # generate mask
             point_rgb, point_alpha, weights = raw2weights(raw_mask, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
@@ -845,17 +792,17 @@ def render_rays(ray_batch,
             mask = torch.mean(mask, -1)
             mask = mask > point_mask_threshold
             mask = mask.int()
-            
+            # print(mask.sum() / len(mask))
+            # input()
             mask = mask.unsqueeze(-1)
         
-        # for key in feat_dict:
-        #     torch.mean(torch.abs(feat_dict[key] - feat_dict_teacher[key]))
-
         point_error = torch.abs(raw_teacher * (1-mask) - raw * (1-mask))
+        # point_error = torch.sum(point_error) / (torch.sum(1-mask)+1e-6)
         point_error = torch.sum(point_error, 1) / (torch.sum((1-mask), 1)+1e-6)
 
         if render_kwargs_test_teacher_second is not None:
             point_error_second = torch.abs(raw_teacher_second * (1-mask) - raw * (1-mask))
+            # point_error_second = torch.sum(point_error_second) / (torch.sum(1-mask)+1e-6)
             point_error_second = torch.sum(point_error_second, 1) / (torch.sum((1-mask), 1)+1e-6)
 
     rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
@@ -873,19 +820,18 @@ def render_rays(ray_batch,
 
         run_fn = network_fn if network_fine is None else network_fine
 #         raw = run_network(pts, fn=run_fn)
-        raw, feat_dict = network_query_fn(pts, viewdirs, run_fn)
-        
+        raw = network_query_fn(pts, viewdirs, run_fn)
         if use_point_mask:
             point_error_0 = point_error
             if render_kwargs_test_teacher_second is not None:
                 point_error_0_second = point_error_second
                 
             with torch.no_grad():
-                raw_teacher, _ = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fine'])
-                raw_mask, _ = network_query_fn(pts, viewdirs, render_kwargs_test_mask['network_fn'])
+                raw_teacher = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fine'])
+                raw_mask = network_query_fn(pts, viewdirs, render_kwargs_test_mask['network_fn'])
                 
                 if render_kwargs_test_teacher_second is not None:
-                    raw_teacher_second, _ = network_query_fn(pts, viewdirs, render_kwargs_test_teacher_second['network_fn'])
+                    raw_teacher_second = network_query_fn(pts, viewdirs, render_kwargs_test_teacher_second['network_fn'])
 
                 # generate mask
                 point_rgb, point_alpha, weights = raw2weights(raw_mask, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
@@ -1090,25 +1036,12 @@ def config_parser():
     parser.add_argument('--ft_layers', nargs='+', help='<Required> Set flag')
     parser.add_argument('--bitfit_layers', nargs='+', help='<Required> Set flag')
     parser.add_argument('--lora_layers', nargs='+', help='<Required> Set flag', default=None)
-    
-    parser.add_argument("--render_output_name", type=str, default=None)
-    parser.add_argument("--transforms_test_key", type=str, default=None)
-    parser.add_argument("--return_feat", type=bool, default=False)
-    parser.add_argument("--use_mask_bce_loss", type=bool, default=False)
-    parser.add_argument("--use_lr_global_step_from_scratch", type=bool, default=False)
-
     # for adapter
     parser.add_argument('--adapter_layers', nargs='+', help='[0-6]. 0 indicate after input layer,pts 7 do not support adapter', default=None)
-    parser.add_argument('--adapter_version', type=int, default=0)
-    parser.add_argument('--bottle_neck_dim', type=int, default=None)
-    parser.add_argument("--lrate_adaptor", type=float, default=5e-4, help='learning rate')
-    parser.add_argument("--lrate_decay_adaptor", type=int, default=500, help='exponential learning rate decay (in 1000 steps)')
-
-    # for expert
-    parser.add_argument("--use_expert", type=bool, default=False)
-    parser.add_argument("--expert_version", type=str, default='v1')
-    parser.add_argument("--expert_w", type=int, default=256)
-    parser.add_argument("--expert_d", type=int, default=2)
+    parser.add_argument("--add_branch", action='store_true')
+    parser.add_argument("--render_output_name", type=str, default=None)
+    parser.add_argument("--return_feat", type=bool, default=False)
+    parser.add_argument("--use_mask_bce_loss", type=bool, default=False)
 
     return parser
 
@@ -1266,19 +1199,8 @@ def train():
             file.write(open(args.config, 'r').read())
 
     # Create nerf model
-    if args.adapter_layers:
-        render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, optimizer_second = create_nerf(args, ckpt_path=args.ckpt_path)
-    elif args.use_expert:
-        render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, optimizer_second = create_nerf(args, ckpt_path=args.ckpt_path)
-    else:
-        render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, _ = create_nerf(args, ckpt_path=args.ckpt_path)
-
+    render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(args, ckpt_path=args.ckpt_path)
     global_step = start
-    lr_global_step = 0
-    if args.adapter_layers:
-        global_step_second = 0
-    elif args.use_expert:
-        global_step_second = 0
 
     bds_dict = {
         'near' : near,
@@ -1297,7 +1219,7 @@ def train():
 
     # Create teacher nerf model
     if args.use_teacher_nerf:
-        _, render_kwargs_test_teacher, _, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path)
+        _, render_kwargs_test_teacher, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path)
         render_kwargs_test_teacher.update(bds_dict)
         render_kwargs_test_mask = create_mask_nerf(args, ckpt_path=args.ft_mask_path)
         render_kwargs_test_mask.update(bds_dict)
@@ -1306,7 +1228,7 @@ def train():
         render_kwargs_test_mask = None
 
     if args.use_teacher_nerf_second:
-        _, render_kwargs_test_teacher_second, _, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path_second)
+        _, render_kwargs_test_teacher_second, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path_second)
         render_kwargs_test_teacher_second.update(bds_dict)
     else:
         render_kwargs_test_teacher_second = None
@@ -1329,8 +1251,6 @@ def train():
 
             if args.render_output_name is not None:
                 testsavedir = os.path.join(basedir, expname, args.render_output_name + '_{:06d}'.format(start))
-                if args.render_factor > 0:
-                    testsavedir = os.path.join(basedir, expname, args.render_output_name + '_{:06d}'.format(start) + '_f' + str(args.render_factor))
             else:
                 testsavedir = os.path.join(basedir, expname, 'renderonly_{}_{:06d}'.format('test' if args.render_test else 'path', start))
 
@@ -1458,26 +1378,15 @@ def train():
                                                 verbose=i < 10, retraw=True,
                                                 **render_kwargs_train)
     
-        if optimizer is not None:
-            optimizer.zero_grad()
-        if args.adapter_layers:
-            optimizer_second.zero_grad()
-        elif args.use_expert:
-            optimizer_second.zero_grad()
 
+        optimizer.zero_grad()
         if args.use_mask_bce_loss:
             img_loss = img2bce(rgb, target_s)
-            try:
-                psnr = mse2psnr(img2mse(rgb, target_s))
-            except:
-                psnr = 0
         else:
             img_loss = img2mse(rgb, target_s)
-            psnr = mse2psnr(img_loss)
-
         trans = extras['raw'][...,-1]
         loss = img_loss
-        
+        psnr = mse2psnr(img_loss)
         if args.add_dino:
             distances = ((emb - target_emb) ** 2).sum(dim=1)
             loss_distillation = distances.mean() * 0.001
@@ -1487,15 +1396,10 @@ def train():
         if 'rgb0' in extras:
             if args.use_mask_bce_loss:
                 img_loss0 = img2bce(extras['rgb0'], target_s)
-                try:
-                    psnr0 = mse2psnr(img2mse(rgb, target_s))
-                except:
-                    psnr0 = 0
             else:
                 img_loss0 = img2mse(extras['rgb0'], target_s)
-                psnr0 = mse2psnr(img_loss0)
             loss = loss + img_loss0
-                
+            psnr0 = mse2psnr(img_loss0)
             if args.add_dino:
                 distances = ((extras['emb0'] - target_emb) ** 2).sum(dim=1)
                 loss_distillation0 = distances.mean() * 0.001
@@ -1557,44 +1461,15 @@ def train():
                     loss += img_loss0_teacher * args.w_loss_teacher
 
         loss.backward()
-        if optimizer is not None:
-            optimizer.step()
+        optimizer.step()
 
-            # NOTE: IMPORTANT!
-            ###   update learning rate   ###
-            if args.use_lr_global_step_from_scratch:
-                decay_rate = 0.1
-                decay_steps = args.lrate_decay * 1000
-                new_lrate = args.lrate * (decay_rate ** (lr_global_step / decay_steps))
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = new_lrate
-                lr_global_step += 1
-            else:
-                decay_rate = 0.1
-                decay_steps = args.lrate_decay * 1000
-                new_lrate = args.lrate * (decay_rate ** (global_step / decay_steps))
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = new_lrate
-        
-        if args.adapter_layers:
-            optimizer_second.step()
-
-            decay_rate = 0.1
-            decay_steps = args.lrate_decay_adaptor * 1000
-            new_lrate = args.lrate_adaptor * (decay_rate ** (global_step_second / decay_steps))
-            for param_group in optimizer_second.param_groups:
-                param_group['lr'] = new_lrate 
-            global_step_second += 1
-        elif args.use_expert:
-            optimizer_second.step()
-
-            decay_rate = 0.1
-            decay_steps = args.lrate_decay_adaptor * 1000
-            new_lrate = args.lrate_adaptor * (decay_rate ** (global_step_second / decay_steps))
-            for param_group in optimizer_second.param_groups:
-                param_group['lr'] = new_lrate 
-            global_step_second += 1
-
+        # NOTE: IMPORTANT!
+        ###   update learning rate   ###
+        decay_rate = 0.1
+        decay_steps = args.lrate_decay * 1000
+        new_lrate = args.lrate * (decay_rate ** (global_step / decay_steps))
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = new_lrate
         ################################
 
         dt = time.time()-time0
@@ -1604,57 +1479,20 @@ def train():
         # Rest is logging
         if i%args.i_weights==0:
             path = os.path.join(basedir, expname, '{:06d}.tar'.format(i))
-            output_dict = dict()
-            
             if 'network_fine' in render_kwargs_train and render_kwargs_train['network_fine'] is not None:
-                output_dict = {
+                torch.save({
                     'global_step': global_step,
                     'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
-                    'network_fine_state_dict': render_kwargs_train['network_fine'].state_dict()
-                }
+                    'network_fine_state_dict': render_kwargs_train['network_fine'].state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, path)
             else:
-                # torch.save({
-                #     'global_step': global_step,
-                #     'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
-                #     'optimizer_state_dict': optimizer.state_dict(),
-                # }, path)
-                output_dict = {
+                torch.save({
                     'global_step': global_step,
-                    'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict()
-                }
-            
-            if optimizer is not None:
-                output_dict['optimizer_state_dict'] = optimizer.state_dict()
-
-            torch.save(output_dict, path)
+                    'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, path)
             print('Saved checkpoints at', path)
-            
-            if args.adapter_layers:
-                path_second = os.path.join(basedir, expname, '{:06d}_adaptor.tar'.format(i))
-                if 'network_fine' in render_kwargs_train and render_kwargs_train['network_fine'] is not None:
-                    torch.save({
-                        'global_step': global_step,
-                        'network_fn_adapters_state_dict': render_kwargs_train['network_fn'].adapters.state_dict(),
-                        'network_fine_adapters_state_dict': render_kwargs_train['network_fine'].adapters.state_dict(),
-                    }, path_second)
-                else:
-                    torch.save({
-                        'global_step': global_step,
-                        'network_fn_adapters_state_dict': render_kwargs_train['network_fn'].adapters.state_dict(),
-                    }, path_second)
-            elif args.use_expert:
-                path_second = os.path.join(basedir, expname, '{:06d}_expert.tar'.format(i))
-                if 'network_fine' in render_kwargs_train and render_kwargs_train['network_fine'] is not None:
-                    torch.save({
-                        'global_step': global_step,
-                        'network_fn_expert_state_dict': render_kwargs_train['network_fn'].expert.state_dict(),
-                        'network_fine_expert_state_dict': render_kwargs_train['network_fine'].expert.state_dict(),
-                    }, path_second)
-                else:
-                    torch.save({
-                        'global_step': global_step,
-                        'network_fn_expert_state_dict': render_kwargs_train['network_fn'].expert.state_dict(),
-                    }, path_second)
 
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode
@@ -1683,12 +1521,7 @@ def train():
 
     
         if i%args.i_print==0:
-            try:
-                tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
-            except KeyboardInterrupt:
-                break
-            except:
-                pass
+            tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
         """
             print(expname, i, psnr.numpy(), loss.numpy(), global_step.numpy())
             print('iter time {:.05f}'.format(dt))
