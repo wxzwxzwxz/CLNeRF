@@ -570,6 +570,80 @@ def create_nerf(args, ckpt_path=None):
 
     return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, optimizer_second
 
+def create_teacher_nerf(args, ckpt_path=None):
+    embed_fn, input_ch = get_embedder(args.multires, args.i_embed)
+
+    input_ch_views = 0
+    embeddirs_fn = None
+    if args.use_viewdirs:
+        embeddirs_fn, input_ch_views = get_embedder(args.multires_views, args.i_embed)
+    output_ch = 5 if args.N_importance > 0 else 4
+    skips = [4]
+    model = NeRF(D=args.netdepth, W=args.netwidth,
+                 input_ch=input_ch, output_ch=output_ch, skips=skips,
+                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
+
+    model_fine = None
+    if args.N_importance > 0:
+        model_fine = NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
+                          input_ch=input_ch, output_ch=output_ch, skips=skips,
+                          input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
+
+    set_grad_false_except_keyword(model, model_fine, [])
+
+    basedir = args.basedir
+    expname = args.expname
+
+    ##########################
+
+    # Load checkpoints
+    if ckpt_path is not None:
+        ckpts = [ckpt_path]
+    elif args.ft_path is not None and args.ft_path!='None':
+        ckpts = [args.ft_path]
+    else:
+        ckpts = [os.path.join(basedir, expname, f) for f in sorted(os.listdir(os.path.join(basedir, expname))) if 'tar' in f and 'adaptor.tar' not in f]
+
+    # print('Found ckpts', ckpts)
+    if len(ckpts) > 0 and not args.no_reload:
+        ckpt_path = ckpts[-1]
+        print('Reloading from', ckpt_path)
+        ckpt = torch.load(ckpt_path)
+
+        # Load model
+        model.load_state_dict(ckpt['network_fn_state_dict'], strict=False)
+        if model_fine is not None:
+            model_fine.load_state_dict(ckpt['network_fine_state_dict'], strict=False)
+
+    network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
+                                                                embed_fn=embed_fn,
+                                                                embeddirs_fn=embeddirs_fn,
+                                                                netchunk=args.netchunk,
+                                                                return_feat=args.return_feat)
+    render_kwargs_train = {
+        'network_query_fn' : network_query_fn,
+        'perturb' : args.perturb,
+        'N_importance' : args.N_importance,
+        'network_fine' : model_fine,
+        'N_samples' : args.N_samples,
+        'network_fn' : model,
+        'use_viewdirs' : args.use_viewdirs,
+        'white_bkgd' : args.white_bkgd,
+        'raw_noise_std' : args.raw_noise_std,
+    }
+
+    # NDC only good for LLFF-style forward facing data
+    if args.dataset_type != 'llff' or args.no_ndc:
+        print('Not ndc!')
+        render_kwargs_train['ndc'] = False
+        render_kwargs_train['lindisp'] = args.lindisp
+
+    render_kwargs_test = {k : render_kwargs_train[k] for k in render_kwargs_train}
+    render_kwargs_test['perturb'] = False
+    render_kwargs_test['raw_noise_std'] = 0.
+
+    return render_kwargs_train, render_kwargs_test
+
 def create_mask_nerf(args, ckpt_path):
     """Instantiate NeRF's MLP model.
     """
@@ -1095,6 +1169,8 @@ def config_parser():
     parser.add_argument("--transforms_test_key", type=str, default=None)
     parser.add_argument("--return_feat", type=bool, default=False)
     parser.add_argument("--use_mask_bce_loss", type=bool, default=False)
+    parser.add_argument("--use_mask_reg_loss", type=bool, default=False)
+    parser.add_argument("--w_mask_reg_loss", type=float, default=1e-3)
     parser.add_argument("--use_lr_global_step_from_scratch", type=bool, default=False)
 
     # for adapter
@@ -1109,7 +1185,8 @@ def config_parser():
     parser.add_argument("--expert_version", type=str, default='v1')
     parser.add_argument("--expert_w", type=int, default=256)
     parser.add_argument("--expert_d", type=int, default=2)
-
+    parser.add_argument("--use_expert_predict_mask", type=bool, default=False)
+    
     return parser
 
 
@@ -1297,7 +1374,9 @@ def train():
 
     # Create teacher nerf model
     if args.use_teacher_nerf:
-        _, render_kwargs_test_teacher, _, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path)
+        # _, render_kwargs_test_teacher, _, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path)
+        _, render_kwargs_test_teacher = create_teacher_nerf(args, ckpt_path=args.ft_teacher_path)
+        
         render_kwargs_test_teacher.update(bds_dict)
         render_kwargs_test_mask = create_mask_nerf(args, ckpt_path=args.ft_mask_path)
         render_kwargs_test_mask.update(bds_dict)
@@ -1306,7 +1385,8 @@ def train():
         render_kwargs_test_mask = None
 
     if args.use_teacher_nerf_second:
-        _, render_kwargs_test_teacher_second, _, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path_second)
+        # _, render_kwargs_test_teacher_second, _, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path_second)
+        _, render_kwargs_test_teacher_second = create_teacher_nerf(args, ckpt_path=args.ft_teacher_path_second)
         render_kwargs_test_teacher_second.update(bds_dict)
     else:
         render_kwargs_test_teacher_second = None
@@ -1474,6 +1554,9 @@ def train():
         else:
             img_loss = img2mse(rgb, target_s)
             psnr = mse2psnr(img_loss)
+        
+        if args.use_mask_reg_loss:
+            img_loss += torch.mean(torch.abs((1 - rgb))) * args.w_mask_reg_loss
 
         trans = extras['raw'][...,-1]
         loss = img_loss
@@ -1494,6 +1577,10 @@ def train():
             else:
                 img_loss0 = img2mse(extras['rgb0'], target_s)
                 psnr0 = mse2psnr(img_loss0)
+            
+            if args.use_mask_reg_loss:
+                img_loss0 += torch.mean(torch.abs((1 - extras['rgb0']))) * args.w_mask_reg_loss
+
             loss = loss + img_loss0
                 
             if args.add_dino:

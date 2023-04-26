@@ -60,46 +60,49 @@ class expert_v2(nn.Module):
         super().__init__()
         # self.D = D
         # self.W = W
-        # self.args = args
+        self.args = args
 
-        self.input_linears = nn.ModuleList([nn.Linear(input_dim, W)])
+        # self.input_linears = nn.ModuleList([nn.Linear(input_dim, W)])
+        self.input_linears = nn.Linear(input_dim, W)
         self.pts_linears = nn.ModuleList([nn.Linear(W, W) for i in range(D)])
-        self.output_linears = nn.ModuleList([nn.Linear(W, output_dim)])
+        # self.output_linears = nn.ModuleList([nn.Linear(W, output_dim)])
+        self.output_linears = nn.Linear(W, output_dim)
 
-        for m in self.input_linears:
-            if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight)
-                # torch.nn.init.zeros_(m.weight)
-                if m.bias is not None:
-                    # torch.nn.init.xavier_uniform_(m.bias)
-                    torch.nn.init.zeros_(m.bias)
+        if args.use_expert_predict_mask:
+            self.mask_linear = nn.Linear(W, 1)
 
-        # for i in range(D):
-        for m in self.pts_linears:
-            if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight)
-                # torch.nn.init.zeros_(m.weight)
-                if m.bias is not None:
-                    # torch.nn.init.xavier_uniform_(m.bias)
-                    torch.nn.init.zeros_(m.bias)
+        # torch.nn.init.xavier_uniform_(self.input_linears.weight)
+        # if self.input_linears.bias is not None:
+        #     torch.nn.init.zeros_(self.input_linears.bias)
         
-        for m in self.output_linears:
-            if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight)
-                # torch.nn.init.zeros_(m.weight)
-                if m.bias is not None:
-                    # torch.nn.init.xavier_uniform_(m.bias)
-                    torch.nn.init.zeros_(m.bias)
+        # torch.nn.init.xavier_uniform_(self.output_linears.weight)
+        # if self.output_linears.bias is not None:
+        #     torch.nn.init.zeros_(self.output_linears.bias)
+
+        # for m in self.pts_linears:
+        #     if isinstance(m, nn.Linear):
+        #         torch.nn.init.xavier_uniform_(m.weight)
+        #         if m.bias is not None:
+        #             torch.nn.init.zeros_(m.bias)
                 
     def forward(self, h):
-        h = self.input_linears[0](h)
+        h = self.input_linears(h)
+
+        # newly added
+        h = F.relu(h)
 
         for i, l in enumerate(self.pts_linears):
             h = self.pts_linears[i](h)
             h = F.relu(h)
 
-        # outputs = h
-        outputs = self.output_linears[0](h)
+        outputs = self.output_linears(h)
+        # newly added
+        outputs = F.relu(outputs)
+        # print(torch.mean(outputs))
+        # input()
+
+        if self.args.use_expert_predict_mask:
+            outputs = torch.cat([outputs, self.mask_linear(outputs)], -1)
         
         return outputs
 
