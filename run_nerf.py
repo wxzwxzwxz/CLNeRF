@@ -12,6 +12,7 @@ from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 
 from run_nerf_helpers import *
+import nerf_teacher
 
 from load_llff import load_llff_data
 from load_deepvoxels import load_dv_data
@@ -579,13 +580,13 @@ def create_teacher_nerf(args, ckpt_path=None):
         embeddirs_fn, input_ch_views = get_embedder(args.multires_views, args.i_embed)
     output_ch = 5 if args.N_importance > 0 else 4
     skips = [4]
-    model = NeRF(D=args.netdepth, W=args.netwidth,
+    model = nerf_teacher.NeRF(D=args.netdepth, W=args.netwidth,
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
                  input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
 
     model_fine = None
     if args.N_importance > 0:
-        model_fine = NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
+        model_fine = nerf_teacher.NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
                           input_ch=input_ch, output_ch=output_ch, skips=skips,
                           input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
 
@@ -903,6 +904,9 @@ def render_rays(ray_batch,
 
 #     raw = run_network(pts)
     raw, feat_dict = network_query_fn(pts, viewdirs, network_fn)
+    # if use_predict_mask:
+    #     raw = raw[..., :-1]
+    #     mask = raw[..., -1:]
 
     if use_point_mask:
         with torch.no_grad():
@@ -1693,29 +1697,30 @@ def train():
             path = os.path.join(basedir, expname, '{:06d}.tar'.format(i))
             output_dict = dict()
             
+            '''
+            model_dict = model.state_dict()
+            modelCheckpoint = torch.load(checkpoint)
+            pretrained_dict = modelCheckpoint['state_dict']
+
+            network_fn_state_dict = render_kwargs_train['network_fn'].state_dict()
+            
+            new_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict.keys()}
+            model_dict.update(new_dict)
+            '''
+            # for key in render_kwargs_train['network_fn'].state_dict().keys():
+            #     print(key)
+            # input()
+            output_dict = {
+                'global_step': global_step,
+                'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict()
+            }
+            
             if 'network_fine' in render_kwargs_train and render_kwargs_train['network_fine'] is not None:
-                output_dict = {
-                    'global_step': global_step,
-                    'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
-                    'network_fine_state_dict': render_kwargs_train['network_fine'].state_dict()
-                }
-            else:
-                # torch.save({
-                #     'global_step': global_step,
-                #     'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
-                #     'optimizer_state_dict': optimizer.state_dict(),
-                # }, path)
-                output_dict = {
-                    'global_step': global_step,
-                    'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict()
-                }
+                output_dict['network_fine_state_dict'] = render_kwargs_train['network_fine'].state_dict()
             
             if optimizer is not None:
                 output_dict['optimizer_state_dict'] = optimizer.state_dict()
 
-            torch.save(output_dict, path)
-            print('Saved checkpoints at', path)
-            
             if args.adapter_layers:
                 path_second = os.path.join(basedir, expname, '{:06d}_adaptor.tar'.format(i))
                 if 'network_fine' in render_kwargs_train and render_kwargs_train['network_fine'] is not None:
@@ -1730,18 +1735,41 @@ def train():
                         'network_fn_adapters_state_dict': render_kwargs_train['network_fn'].adapters.state_dict(),
                     }, path_second)
             elif args.use_expert:
+                # delete expert in original ckpt
+                network_fn_state_dict = render_kwargs_train['network_fn'].state_dict()
+                new_network_fn_state_dict = {k: v for k, v in network_fn_state_dict.items() if 'expert' not in k}
+                output_dict['network_fn_state_dict'] = new_network_fn_state_dict
+
+                # save expert in new ckpt
                 path_second = os.path.join(basedir, expname, '{:06d}_expert.tar'.format(i))
+                output_dict_expert = {
+                    'global_step': global_step,
+                    'network_fn_expert_state_dict': render_kwargs_train['network_fn'].expert.state_dict()
+                }
                 if 'network_fine' in render_kwargs_train and render_kwargs_train['network_fine'] is not None:
-                    torch.save({
-                        'global_step': global_step,
-                        'network_fn_expert_state_dict': render_kwargs_train['network_fn'].expert.state_dict(),
-                        'network_fine_expert_state_dict': render_kwargs_train['network_fine'].expert.state_dict(),
-                    }, path_second)
-                else:
-                    torch.save({
-                        'global_step': global_step,
-                        'network_fn_expert_state_dict': render_kwargs_train['network_fn'].expert.state_dict(),
-                    }, path_second)
+                    # torch.save({
+                    #     'global_step': global_step,
+                    #     'network_fn_expert_state_dict': render_kwargs_train['network_fn'].expert.state_dict(),
+                    #     'network_fine_expert_state_dict': render_kwargs_train['network_fine'].expert.state_dict(),
+                    # }, path_second)
+
+                    # delete expert in original ckpt
+                    network_fn_state_dict = render_kwargs_train['network_fine'].state_dict()
+                    new_network_fn_state_dict = {k: v for k, v in network_fn_state_dict.items() if 'expert' not in k}
+                    output_dict['network_fine_state_dict'] = new_network_fn_state_dict
+                    
+                    # save expert in new ckpt
+                    output_dict_expert['network_fine_expert_state_dict'] = render_kwargs_train['network_fine'].expert.state_dict()
+                    
+                # for key in output_dict['network_fine_state_dict'].keys():
+                #     print(key)
+                # input()
+
+                torch.save(output_dict_expert, path_second)
+                print('Saved checkpoints of expert at', path_second)
+            
+            torch.save(output_dict, path)
+            print('Saved checkpoints at', path)
 
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode

@@ -134,6 +134,9 @@ class NeRF(nn.Module):
             elif args.expert_version == 'v2':
                 # d + 2
                 self.expert = expert_v2(D=args.expert_d, W=args.expert_w, input_dim=W, output_dim=W, args=args)
+            elif args.expert_version == 'v3':
+                # d + 2
+                self.expert = expert_v2(D=args.expert_d, W=args.expert_w, input_dim=input_ch, output_dim=W, args=args)
 
         ### Implementation according to the official code release (https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L104-L105)
         self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
@@ -165,10 +168,16 @@ class NeRF(nn.Module):
             if self.args.add_dino:
                 pass
                 self.emb_linear = nn.Linear(W//2, 64)
+            
+            # if self.args.use_predict_mask:
+            #     self.mask_linear = nn.Linear(W, 1)
         else:
             if args.lora and 'output_linear' in args.lora_layers:
                 self.output_linear = lora.Linear(W, output_ch, r=rank)
             else:
+                # if self.args.use_predict_mask:
+                #     output_ch += 1
+
                 self.output_linear = nn.Linear(W, output_ch)
 
     def forward(self, x, return_feat=False):
@@ -182,8 +191,11 @@ class NeRF(nn.Module):
             output_dict['pts_linears_0'] = h
 
         if self.args.use_expert:
-            expert_h = h
-            expert_h = self.expert(expert_h)
+            if self.args.expert_version == 'v1' or self.args.expert_version == 'v2':
+                # expert_h = h
+                expert_h = self.expert(h)
+            elif self.args.expert_version == 'v3':
+                expert_h = self.expert(input_pts)
 
         for i in range(1, len(self.pts_linears)):
             h = self.pts_linears[i](h)
@@ -234,14 +246,17 @@ class NeRF(nn.Module):
                     output_dict['views_linears_'+str(i)] = h
 
             rgb = self.rgb_linear(h)
-
             if self.args.add_dino:
                 pass
-                h = self.emb_linear_penultimate(feature)
-                ft = self.emb_linear(h)
+                # h = self.emb_linear_penultimate(feature)
+                # ft = self.emb_linear(h)
                 outputs = torch.cat([rgb, alpha, ft], -1)
             else:
                 outputs = torch.cat([rgb, alpha], -1)
+
+            # if self.args.use_predict_mask:
+            #     mask = self.mask_linear(h)
+            #     outputs = torch.cat([outputs, mask], -1)
         else:
             outputs = self.output_linear(h)
 
