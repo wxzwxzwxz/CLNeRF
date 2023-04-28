@@ -1683,13 +1683,13 @@ def train():
                     # rgb_gt = (1-rgb_mask) * rgb_teacher
 
                 # img_loss_teacher = img2mse((1-rgb_mask) * rgb_student, rgb_gt)
-                img_loss_teacher = img2mse_withmask(rgb_student, rgb_gt, (1-rgb_mask))
+                img_loss_teacher = img2mse_withmask(rgb_student, rgb_teacher, (1-rgb_mask))
                 
                 loss += img_loss_teacher * args.w_loss_teacher
 
                 if 'rgb0' in extras:
                     # img_loss0_teacher = img2mse((1-rgb_mask) * extras_student['rgb0'], rgb_gt)
-                    img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_gt, (1-rgb_mask))
+                    img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_teacher, (1-rgb_mask))
                     loss += img_loss0_teacher * args.w_loss_teacher
 
         loss.backward()
