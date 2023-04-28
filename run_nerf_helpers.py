@@ -11,6 +11,7 @@ from expert import *
 
 # Misc
 img2mse = lambda x, y : torch.mean((x - y) ** 2)
+img2mse_withmask = lambda x, y, mask : torch.sum((x * mask - y * mask) ** 2) / (torch.sum(mask)+1e-6)
 img2bce = nn.BCELoss()
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
@@ -169,14 +170,14 @@ class NeRF(nn.Module):
                 pass
                 self.emb_linear = nn.Linear(W//2, 64)
             
-            # if self.args.use_predict_mask:
-            #     self.mask_linear = nn.Linear(W, 1)
+            if self.args.use_predict_mask:
+                self.mask_linear = nn.Linear(W//2, 1)
         else:
             if args.lora and 'output_linear' in args.lora_layers:
                 self.output_linear = lora.Linear(W, output_ch, r=rank)
             else:
-                # if self.args.use_predict_mask:
-                #     output_ch += 1
+                if self.args.use_predict_mask:
+                    output_ch += 1
 
                 self.output_linear = nn.Linear(W, output_ch)
 
@@ -254,9 +255,9 @@ class NeRF(nn.Module):
             else:
                 outputs = torch.cat([rgb, alpha], -1)
 
-            # if self.args.use_predict_mask:
-            #     mask = self.mask_linear(h)
-            #     outputs = torch.cat([outputs, mask], -1)
+            if self.args.use_predict_mask:
+                mask = self.mask_linear(h)
+                outputs = torch.cat([outputs, mask], -1)
         else:
             outputs = self.output_linear(h)
 

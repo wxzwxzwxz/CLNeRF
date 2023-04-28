@@ -81,6 +81,7 @@ def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64, 
         return outputs, None
 
 def batchify_rays(rays_flat, chunk=1024*32, use_point_mask=False, 
+                use_predict_mask=False,
                 render_kwargs_test_teacher=None, 
                 render_kwargs_test_teacher_second=None, 
                 render_kwargs_test_mask=None, 
@@ -90,6 +91,7 @@ def batchify_rays(rays_flat, chunk=1024*32, use_point_mask=False,
     all_ret = {}
     for i in range(0, rays_flat.shape[0], chunk):
         ret = render_rays(rays_flat[i:i+chunk], **kwargs, use_point_mask=use_point_mask, 
+                        use_predict_mask=use_predict_mask,
                         render_kwargs_test_teacher=render_kwargs_test_teacher, 
                         render_kwargs_test_teacher_second=render_kwargs_test_teacher_second,
                         render_kwargs_test_mask=render_kwargs_test_mask)
@@ -112,6 +114,7 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
                   near=0., far=1.,
                   use_viewdirs=False, c2w_staticcam=None,
                   use_point_mask=False,
+                  use_predict_mask=False,
                   render_kwargs_test_teacher=None,
                   render_kwargs_test_teacher_second=None,
                   render_kwargs_test_mask=None,
@@ -170,6 +173,7 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
 
     # Render and reshape
     all_ret = batchify_rays(rays, chunk, **kwargs, use_point_mask=use_point_mask, \
+                            use_predict_mask=use_predict_mask, \
                             render_kwargs_test_teacher=render_kwargs_test_teacher, \
                             render_kwargs_test_teacher_second=render_kwargs_test_teacher_second, \
                             render_kwargs_test_mask=render_kwargs_test_mask)
@@ -771,7 +775,8 @@ def raw2weights(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
 
     return rgb, alpha, weights
 
-def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False):
+def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False,
+                use_predict_mask=False):
     """Transforms model's predictions to semantically meaningful values.
     Args:
         raw: [num_rays, num_samples along ray, 4]. Prediction from model.
@@ -806,6 +811,11 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
     # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
     weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
     rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
+    if use_predict_mask:
+        mask = torch.sigmoid(raw[...,-1:])
+        mask_map = torch.sum(weights[...,None] * mask, -2)  # [N_rays, 3]
+    else:
+        mask_map = None 
 
     depth_map = torch.sum(weights * z_vals, -1)
     disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
@@ -813,9 +823,10 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
 
     if white_bkgd:
         rgb_map = rgb_map + (1.-acc_map[...,None])
+        if use_predict_mask:
+            mask_map = mask_map + (1.-acc_map[...,None])
 
-    return rgb_map, disp_map, acc_map, weights, depth_map
-
+    return rgb_map, disp_map, acc_map, weights, depth_map, mask_map
 
 def render_rays(ray_batch,
                 network_fn,
@@ -832,6 +843,7 @@ def render_rays(ray_batch,
                 pytest=False,
                 use_point_mask=False,
                 point_mask_threshold=0.9,
+                use_predict_mask=False,
                 render_kwargs_test_teacher=None,
                 render_kwargs_test_teacher_second=None, 
                 render_kwargs_test_mask=None
@@ -904,10 +916,7 @@ def render_rays(ray_batch,
 
 #     raw = run_network(pts)
     raw, feat_dict = network_query_fn(pts, viewdirs, network_fn)
-    # if use_predict_mask:
-    #     raw = raw[..., :-1]
-    #     mask = raw[..., -1:]
-
+    
     if use_point_mask:
         with torch.no_grad():
             raw_teacher, feat_dict_teacher = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fn'])
@@ -936,8 +945,8 @@ def render_rays(ray_batch,
             point_error_second = torch.abs(raw_teacher_second * (1-mask) - raw * (1-mask))
             point_error_second = torch.sum(point_error_second, 1) / (torch.sum((1-mask), 1)+1e-6)
 
-    rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
-
+    rgb_map, disp_map, acc_map, weights, depth_map, mask_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest, use_predict_mask=use_predict_mask)
+    
     if N_importance > 0:
 
         rgb_map_0, disp_map_0, acc_map_0 = rgb_map, disp_map, acc_map
@@ -982,16 +991,23 @@ def render_rays(ray_batch,
                 # point_error_second = torch.sum(point_error_second) / (torch.sum(1-mask)+1e-6)
                 point_error_second = torch.sum(point_error_second, 1) / (torch.sum((1-mask), 1)+1e-6)
 
-        rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
+        rgb_map, disp_map, acc_map, weights, depth_map, mask_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest, use_predict_mask=use_predict_mask)
 
     ret = {'rgb_map' : rgb_map, 'disp_map' : disp_map, 'acc_map' : acc_map}
+    if use_predict_mask:
+        ret['mask_map'] = mask_map
+
     if retraw:
         ret['raw'] = raw
+
     if N_importance > 0:
         ret['rgb0'] = rgb_map_0
         ret['disp0'] = disp_map_0
         ret['acc0'] = acc_map_0
         ret['z_std'] = torch.std(z_samples, dim=-1, unbiased=False)  # [N_rays]
+
+        if use_predict_mask:
+            ret['mask_map0'] = mask_map
     
     if use_point_mask:
         ret['point_error'] = point_error
@@ -1189,7 +1205,7 @@ def config_parser():
     parser.add_argument("--expert_version", type=str, default='v1')
     parser.add_argument("--expert_w", type=int, default=256)
     parser.add_argument("--expert_d", type=int, default=2)
-    parser.add_argument("--use_expert_predict_mask", type=bool, default=False)
+    parser.add_argument("--use_predict_mask", type=bool, default=False)
     
     return parser
 
@@ -1540,6 +1556,7 @@ def train():
         #####  Core optimization loop  #####
         rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                 verbose=i < 10, retraw=True,
+                                                use_predict_mask=args.use_predict_mask,
                                                 **render_kwargs_train)
     
         if optimizer is not None:
@@ -1556,8 +1573,12 @@ def train():
             except:
                 psnr = 0
         else:
-            img_loss = img2mse(rgb, target_s)
-            psnr = mse2psnr(img_loss)
+            if args.use_predict_mask:
+                img_loss = img2mse_withmask(rgb, target_s, extras['mask_map'])
+                psnr = mse2psnr(img_loss)
+            else:
+                img_loss = img2mse(rgb, target_s)
+                psnr = mse2psnr(img_loss)
         
         if args.use_mask_reg_loss:
             img_loss += torch.mean(torch.abs((1 - rgb))) * args.w_mask_reg_loss
@@ -1579,8 +1600,12 @@ def train():
                 except:
                     psnr0 = 0
             else:
-                img_loss0 = img2mse(extras['rgb0'], target_s)
-                psnr0 = mse2psnr(img_loss0)
+                if args.use_predict_mask:
+                    img_loss0 = img2mse_withmask(extras['rgb0'], target_s, extras['mask_map0'])
+                    psnr0 = mse2psnr(img_loss0)
+                else:
+                    img_loss0 = img2mse(extras['rgb0'], target_s)
+                    psnr0 = mse2psnr(img_loss0)
             
             if args.use_mask_reg_loss:
                 img_loss0 += torch.mean(torch.abs((1 - extras['rgb0']))) * args.w_mask_reg_loss
@@ -1597,7 +1622,30 @@ def train():
             # randomly sample rays and genrate ground truth
             batch_rays = sample_rays(args, hwf, K, i, i_train_teacher, args.N_rand_teacher, poses_teacher, start)
             
-            if args.use_point_mask:
+            if args.use_predict_mask:
+                rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                            verbose=i < 10, retraw=True,
+                                                            use_predict_mask=args.use_predict_mask,
+                                                            **render_kwargs_train)
+                                                        
+                with torch.no_grad():
+                    rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                            verbose=i < 10, retraw=True,
+                                                            **render_kwargs_test_teacher)
+
+                    # rgb_gt = (1-rgb_mask) * rgb_teacher
+
+                # img_loss_teacher = img2mse((1-rgb_mask) * rgb_student, rgb_gt)
+                img_loss_teacher = img2mse_withmask(rgb_student, rgb_teacher, (1-extras['mask_map']))
+                
+                loss += img_loss_teacher * args.w_loss_teacher
+
+                if 'rgb0' in extras:
+                    # img_loss0_teacher = img2mse((1-rgb_mask) * extras_student['rgb0'], rgb_gt)
+                    img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_teacher, (1-extras['mask_map0']))
+                    loss += img_loss0_teacher * args.w_loss_teacher
+
+            elif args.use_point_mask:
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                         verbose=i < 10, retraw=True,
                                                         use_point_mask=args.use_point_mask,
@@ -1632,19 +1680,16 @@ def train():
                     rgb_mask, disp_mask, acc_mask, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
                                                             **render_kwargs_test_mask)
-                    rgb_gt = (1-rgb_mask) * rgb_teacher
+                    # rgb_gt = (1-rgb_mask) * rgb_teacher
 
-                if args.use_mask_bce_loss:
-                    img_loss_teacher = img2bce((1-rgb_mask) * rgb_student, rgb_gt)
-                else:
-                    img_loss_teacher = img2mse((1-rgb_mask) * rgb_student, rgb_gt)
+                # img_loss_teacher = img2mse((1-rgb_mask) * rgb_student, rgb_gt)
+                img_loss_teacher = img2mse_withmask(rgb_student, rgb_gt, (1-rgb_mask))
+                
                 loss += img_loss_teacher * args.w_loss_teacher
 
                 if 'rgb0' in extras:
-                    if args.use_mask_bce_loss: 
-                        img_loss0_teacher = img2bce((1-rgb_mask) * extras_student['rgb0'], rgb_gt)
-                    else:
-                        img_loss0_teacher = img2mse((1-rgb_mask) * extras_student['rgb0'], rgb_gt)
+                    # img_loss0_teacher = img2mse((1-rgb_mask) * extras_student['rgb0'], rgb_gt)
+                    img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_gt, (1-rgb_mask))
                     loss += img_loss0_teacher * args.w_loss_teacher
 
         loss.backward()
