@@ -257,6 +257,7 @@ class NeRF(nn.Module):
 
             if self.args.use_predict_mask:
                 mask = self.mask_linear(h)
+                # outputs = outputs * mask
                 outputs = torch.cat([outputs, mask], -1)
         else:
             outputs = self.output_linear(h)

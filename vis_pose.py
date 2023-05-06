@@ -8,9 +8,9 @@ import pytransform3d.visualizer as pv
 import pytransform3d.plot_utils as pu
 import matplotlib.pyplot as plt
 
-# mesh_filename = 'logs/blendswap_whitehouse_origin_v10_near1_far10_path/blendswap_whitehouse_origin_v10_near1_far10_path_256.obj' # sys.argv[-2]
-camera_filename = 'data/blendswap_whitehouse_origin_v10/transforms_train_all.json' # sys.argv[-1]
-# camera_filename = 'data/blendswap_whitehouse_origin_v10/transforms_train_path.json' # sys.argv[-1]
+# mesh_filename = 'logs/blendswap_whitehouse_origin_v11_near1_far10_path/blendswap_whitehouse_origin_v11_near1_far10_path_256.obj' # sys.argv[-2]
+camera_filename = 'data/blendswap_whitehouse_origin_v11/transforms_train_v11apple_table.json' # sys.argv[-1]
+# camera_filename = 'data/blendswap_whitehouse_origin_v11/transforms_train_path.json' # sys.argv[-1]
 
 with open(camera_filename, "r") as f:
     json_train = json.load(f)

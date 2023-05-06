@@ -37,7 +37,8 @@ def pose_spherical(theta, phi, radius):
 
 def load_blender_data(args, basedir, half_res=False, testskip=1, 
                     load_imgs=True, ori_H=None, ori_W=None, ext='.png',
-                    transforms_train=None, transforms_val=None, transforms_test=None, trainskip=1, spherical_radius=4.0,
+                    trainskip=1, spherical_radius=4.0,
+                    transforms_train=None, transforms_val=None, transforms_test=None, 
                     transforms_train_ratio=None, transforms_test_ratio=None):
     splits = ['train', 'val', 'test']
     metas = {}
@@ -111,11 +112,20 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
         all_poses = []
         all_paths = []
         counts = [0]
+        
+        if args.load_mask == True:
+            all_imgs_mask = []
+        else:
+            imgs_mask = None
+
         for s in splits:
             meta = metas[s]
             imgs = []
             poses = []
             paths = []
+
+            if args.load_mask == True:
+                imgs_mask = []
             
             if s=='train' or trainskip!=1:
                 skip = trainskip
@@ -132,12 +142,20 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
                 # paths.append(frame['file_path'] + ext)
                 all_paths.append(frame['file_path'] + ext)
 
+                if args.load_mask == True:
+                    fname_mask = os.path.join(args.load_mask_dir, frame['file_path'].replace('train', 'train_' + args.mask_ext).replace('test', 'test_' + args.mask_ext) + ext)
+                    imgs_mask.append(imageio.imread(fname_mask))
+
             imgs = (np.array(imgs) / 255.).astype(np.float32) # keep all 4 channels (RGBA)
             poses = np.array(poses).astype(np.float32)
             counts.append(counts[-1] + imgs.shape[0])
             all_imgs.append(imgs)
             all_poses.append(poses)
-            
+
+            if args.load_mask == True:
+                imgs_mask = (np.array(imgs_mask) / 255.).astype(np.float32) # keep all 4 channels (RGBA)
+                all_imgs_mask.append(imgs_mask)
+
             # all_paths.append(paths)
         
         i_split = [np.arange(counts[i], counts[i+1]) for i in range(3)]
@@ -145,6 +163,9 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
         imgs = np.concatenate(all_imgs, 0)
         poses = np.concatenate(all_poses, 0)
         all_paths = np.array(all_paths)
+
+        if args.load_mask == True:
+            imgs_mask = np.concatenate(all_imgs_mask, 0)
         
         ori_H, ori_W = imgs[0].shape[:2]
         H = ori_H
@@ -163,13 +184,22 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             imgs_half_res = np.zeros((imgs.shape[0], H, W, 4))
             imgs_half_res[:, :, :, 3] = 1
             
+            if args.load_mask == True:
+                imgs_mask_half_res = np.zeros((imgs_mask.shape[0], H, W, 4))
+                imgs_mask_half_res[:, :, :, 3] = 1
+
             for i, img in enumerate(imgs):
                 if img.shape[2] == 3:
                     imgs_half_res[i][:, :, :3] = cv2.resize(img, (W, H), interpolation=cv2.INTER_AREA)
                 else:
                     imgs_half_res[i] = cv2.resize(img, (W, H), interpolation=cv2.INTER_AREA)
+                
+                if args.load_mask == True:
+                    imgs_mask_half_res[i][:, :, :3] = cv2.resize(imgs_mask_half_res[i], (W, H), interpolation=cv2.INTER_AREA)
 
             imgs = imgs_half_res
+            if args.load_mask == True:
+                imgs_mask = imgs_mask_half_res
 
         if args.scene_scale is not None:
             poses[:, :, :3] *= args.scene_scale
@@ -194,7 +224,7 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             fts_val = None
             fts_test = None
 
-        return imgs, poses, render_poses, [H, W, focal], i_split, all_paths, ori_H, ori_W, fts_train, fts_test
+        return imgs, poses, render_poses, [H, W, focal], i_split, all_paths, ori_H, ori_W, fts_train, fts_test, imgs_mask
     else:
         all_poses = []
         all_paths = []

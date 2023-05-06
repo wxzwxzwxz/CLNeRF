@@ -28,7 +28,7 @@ config = args.config
 args.n_gpus = torch.cuda.device_count()
 
 # Create nerf model
-_, render_kwargs_test, _, _, _, _ = run_nerf.create_nerf(args)
+_, render_kwargs_test, _, _, _, _ = run_nerf.create_nerf(args, ckpt_path=args.ckpt_path)
 
 if args.near:
     near = args.near

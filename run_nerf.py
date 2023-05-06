@@ -99,14 +99,13 @@ def batchify_rays(rays_flat, chunk=1024*32, use_point_mask=False,
             if k not in all_ret:
                 all_ret[k] = []
             all_ret[k].append(ret[k])
-
+    
     # all_ret = {k : torch.cat(all_ret[k], 0) for k in all_ret}
     for k in all_ret:
         if 'point_error' in k:
             pass
         else:
             all_ret[k] = torch.cat(all_ret[k], 0)
-
     return all_ret
 
 
@@ -202,7 +201,8 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
     return ret_list + [ret_dict]
 
 
-def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0, render_mask_only=False, output_paths=None, render_mask_threshold=0.1):
+def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
+                gt_imgs=None, savedir=None, render_factor=0, render_mask_only=False, output_paths=None, render_mask_threshold=0.1):
 
     H, W, focal = hwf
 
@@ -217,13 +217,19 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
     rgbs = []
     disps = []
 
+    if args and args.use_predict_mask:
+        masks = []
+
     t = time.time()
     psnr = 0
     for i, c2w in enumerate(tqdm(render_poses)):
     # for i, c2w in enumerate((render_poses)):
         # print(i, time.time() - t)
         t = time.time()
-        rgb, disp, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs)
+        rgb, disp, acc, extras = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], use_predict_mask=args.use_predict_mask, **render_kwargs)
+        # for key in extras:
+        #     print(key)
+        # input()
         rgb = rgb.cpu().numpy()
 
         if gt_imgs is not None:
@@ -249,6 +255,9 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
             
         rgbs.append(rgb)
         disps.append(disp.cpu().numpy())
+        if args and args.use_predict_mask:
+            masks.append(extras['mask_map'].cpu().numpy())
+
         if i==0:
             print(rgb.shape, disp.shape)
 
@@ -269,15 +278,24 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
                 
                 # cur_h, cur_w = rgb8.shape[:2]
                 # rgb8 = cv2.resize(rgb8, (int(cur_w*2), int(cur_h*2)))
+                imageio.imwrite(filename, rgb8)
             else:
                 filename = os.path.join(savedir, '{:05d}.jpg'.format(i))
-            
-            cur_h, cur_w, _ = rgb8.shape
-            # rgb8 =cv2.putText(img=np.copy(rgb8), text=str(cur_psnr), org=(cur_w-cur_w//4, cur_h-30), fontFace=3,  fontScale=2, color=(255,0,0), thickness=2)
+                cur_h, cur_w, _ = rgb8.shape
+                # rgb8 =cv2.putText(img=np.copy(rgb8), text=str(cur_psnr), org=(cur_w-cur_w//4, cur_h-30), fontFace=3,  fontScale=2, color=(255,0,0), thickness=2)
+                imageio.imwrite(filename, rgb8)
+                
+                disp = to8b(disps[-1])
+                os.makedirs(savedir + '_disp', exist_ok=True)
+                filename_disp = os.path.join(savedir + '_disp', '{:05d}.jpg'.format(i))
+                imageio.imwrite(filename_disp, disp)
 
-            imageio.imwrite(filename, rgb8)
-            # print(filename)
-            # input()
+                if args and args.use_predict_mask:
+                    mask = to8b(masks[-1])
+                    os.makedirs(savedir + '_mask', exist_ok=True)
+                    filename_mask = os.path.join(savedir + '_mask', '{:05d}.jpg'.format(i))
+                    imageio.imwrite(filename_mask, mask)
+
     
     psnr = psnr / len(render_poses)
     print(psnr)
@@ -392,6 +410,14 @@ def create_nerf(args, ckpt_path=None):
         set_grad_false_except_keyword(model, model_fine, keyword_list)
     elif args.use_expert:
         keyword_list = ['expert']
+        if args.use_expert_ft_alpha:
+            keyword_list += ['alpha_linear']
+        if args.use_expert_ft_rgbfeat:
+            keyword_list += ['rgb_linear']
+            keyword_list += ['output_linear']
+        if args.use_predict_mask:
+            keyword_list += ['mask_linear']
+
         set_grad_false_except_keyword(model, model_fine, keyword_list)
     elif args.bitfit:
         # freeze model params except bias
@@ -422,6 +448,8 @@ def create_nerf(args, ckpt_path=None):
             if ft_layers is not None:
                 ft(model_fine,ft_layers) 
     
+
+
     # finetune several layers
     if args.finetune_last_layer_only == True:
         keyword_list = ['alpha_linear', 'rgb_linear', 'views_linears']
@@ -916,7 +944,6 @@ def render_rays(ray_batch,
 
 #     raw = run_network(pts)
     raw, feat_dict = network_query_fn(pts, viewdirs, network_fn)
-    
     if use_point_mask:
         with torch.no_grad():
             raw_teacher, feat_dict_teacher = network_query_fn(pts, viewdirs, render_kwargs_test_teacher['network_fn'])
@@ -946,10 +973,11 @@ def render_rays(ray_batch,
             point_error_second = torch.sum(point_error_second, 1) / (torch.sum((1-mask), 1)+1e-6)
 
     rgb_map, disp_map, acc_map, weights, depth_map, mask_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest, use_predict_mask=use_predict_mask)
-    
     if N_importance > 0:
 
         rgb_map_0, disp_map_0, acc_map_0 = rgb_map, disp_map, acc_map
+        if use_predict_mask:
+            mask_map_0 = mask_map
 
         z_vals_mid = .5 * (z_vals[...,1:] + z_vals[...,:-1])
         z_samples = sample_pdf(z_vals_mid, weights[...,1:-1], N_importance, det=(perturb==0.), pytest=pytest)
@@ -1007,7 +1035,7 @@ def render_rays(ray_batch,
         ret['z_std'] = torch.std(z_samples, dim=-1, unbiased=False)  # [N_rays]
 
         if use_predict_mask:
-            ret['mask_map0'] = mask_map
+            ret['mask_map0'] = mask_map_0
     
     if use_point_mask:
         ret['point_error'] = point_error
@@ -1161,7 +1189,7 @@ def config_parser():
     parser.add_argument("--render_wo_images", action='store_true')
     parser.add_argument("--ori_H", type=float, default=None)
     parser.add_argument("--ori_W", type=float, default=None)
-    parser.add_argument("--w_loss_teacher", type=float, default=1.0)
+    parser.add_argument("--w_loss_teacher", type=float, default=0.1)
     parser.add_argument("--ext", type=str, default='.png')
     # parser.add_argument("--transforms_train", type=str, default=None)
     parser.add_argument('--transforms_train', nargs='+', default=None)
@@ -1202,10 +1230,17 @@ def config_parser():
 
     # for expert
     parser.add_argument("--use_expert", type=bool, default=False)
-    parser.add_argument("--expert_version", type=str, default='v1')
+    parser.add_argument("--use_expert_ft_alpha", type=bool, default=False)
+    parser.add_argument("--use_expert_ft_rgbfeat", type=bool, default=False)
+    parser.add_argument("--expert_version", type=str, default='v2')
     parser.add_argument("--expert_w", type=int, default=256)
     parser.add_argument("--expert_d", type=int, default=2)
     parser.add_argument("--use_predict_mask", type=bool, default=False)
+
+    parser.add_argument("--load_mask", type=bool, default=False)
+    parser.add_argument("--load_mask_dir", type=str, default=None)
+    parser.add_argument("--mask_ext", type=str, default=None)
+    parser.add_argument("--w_mask_loss", type=float, default=0.1)
     
     return parser
 
@@ -1251,17 +1286,21 @@ def train():
                                                                                 transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
                                                                                 trainskip=args.trainskip, spherical_radius=args.spherical_radius,
                                                                                 transforms_train_ratio=args.transforms_train_ratio,
-                                                                                transforms_test_ratio=args.transforms_test_ratio)
+                                                                                transforms_test_ratio=args.transforms_test_ratio,)
         else:
-            images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W, fts_train, fts_test = load_blender_data(args, args.datadir, args.half_res, args.testskip, ext=args.ext,
+            images, poses, render_poses, hwf, i_split, output_paths, ori_H, ori_W, fts_train, fts_test, images_mask = load_blender_data(args, args.datadir, args.half_res, args.testskip, ext=args.ext,
                                                                                                         transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
                                                                                                         trainskip=args.trainskip, spherical_radius=args.spherical_radius,
                                                                                                         transforms_train_ratio=args.transforms_train_ratio,
                                                                                                         transforms_test_ratio=args.transforms_test_ratio)
             if args.white_bkgd:
                 images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
+                if args.load_mask:
+                    images_mask = images_mask[...,:3]*images_mask[...,-1:] + (1.-images_mask[...,-1:])
             else:
                 images = images[...,:3]
+                if args.load_mask:
+                    images_mask = images_mask[..., :3]
                 
         print('Loaded blender', poses.shape, render_poses.shape, hwf, args.datadir)
         i_train, i_val, i_test = i_split
@@ -1295,7 +1334,7 @@ def train():
             #     images = images[...,:3]
 
         if args.use_teacher_nerf_second:
-            poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _, fts_train, fts_test = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W,
+            poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _, fts_train, fts_test, _ = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W,
                                                                                                                 transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
                                                                                                                 trainskip=args.trainskip, spherical_radius=args.spherical_radius,
                                                                                                                 transforms_train_ratio=args.transforms_train_ratio,
@@ -1443,7 +1482,7 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', render_poses.shape)
 
-            rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor, render_mask_only=args.render_mask_only, output_paths=output_paths, render_mask_threshold=args.render_mask_threshold)
+            rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, args=args, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor, render_mask_only=args.render_mask_only, output_paths=output_paths, render_mask_threshold=args.render_mask_threshold)
             print('Done rendering', testsavedir)
             # imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
 
@@ -1527,6 +1566,9 @@ def train():
             img_i = np.random.choice(i_train)
             target = images[img_i]
             target = torch.Tensor(target).to(device)
+            if args.load_mask:
+                target_mask = images_mask[img_i]
+                target_mask = torch.Tensor(target_mask).to(device)
             pose = poses[img_i, :3,:4]
 
             if N_rand is not None:
@@ -1552,6 +1594,8 @@ def train():
                 rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
                 batch_rays = torch.stack([rays_o, rays_d], 0)
                 target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+                if args.load_mask:
+                    target_s_mask = target_mask[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
 
         #####  Core optimization loop  #####
         rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
@@ -1573,12 +1617,12 @@ def train():
             except:
                 psnr = 0
         else:
-            if args.use_predict_mask:
-                img_loss = img2mse_withmask(rgb, target_s, extras['mask_map'])
-                psnr = mse2psnr(img_loss)
-            else:
-                img_loss = img2mse(rgb, target_s)
-                psnr = mse2psnr(img_loss)
+            # if args.use_predict_mask:
+            #     img_loss = img2mse_withmask(rgb, target_s, extras['mask_map'])
+            #     psnr = mse2psnr(img_loss)
+            # else:
+            img_loss = img2mse(rgb, target_s)
+            psnr = mse2psnr(img_loss)
         
         if args.use_mask_reg_loss:
             img_loss += torch.mean(torch.abs((1 - rgb))) * args.w_mask_reg_loss
@@ -1600,12 +1644,12 @@ def train():
                 except:
                     psnr0 = 0
             else:
-                if args.use_predict_mask:
-                    img_loss0 = img2mse_withmask(extras['rgb0'], target_s, extras['mask_map0'])
-                    psnr0 = mse2psnr(img_loss0)
-                else:
-                    img_loss0 = img2mse(extras['rgb0'], target_s)
-                    psnr0 = mse2psnr(img_loss0)
+                # if args.use_predict_mask:
+                #     img_loss0 = img2mse_withmask(extras['rgb0'], target_s, extras['mask_map0'])
+                #     psnr0 = mse2psnr(img_loss0)
+                # else:
+                img_loss0 = img2mse(extras['rgb0'], target_s)
+                psnr0 = mse2psnr(img_loss0)
             
             if args.use_mask_reg_loss:
                 img_loss0 += torch.mean(torch.abs((1 - extras['rgb0']))) * args.w_mask_reg_loss
@@ -1617,6 +1661,13 @@ def train():
                 loss_distillation0 = distances.mean() * 0.001
                 # print('rgb vs. ft', img_loss0, loss_distillation0, img_loss0 / loss_distillation0)
                 loss = loss + loss_distillation0
+        
+        if args.use_predict_mask:
+            loss_mask = img2mse(extras['mask_map'], target_s_mask) # torch.mean(torch.abs((1 - extras['mask_map']))) # * args.w_mask_reg_loss
+            if 'rgb0' in extras:
+                loss_mask += img2mse(extras['mask_map0'], target_s_mask)
+            
+            loss = loss + args.w_mask_loss * loss_mask
 
         if args.use_teacher_nerf:
             # randomly sample rays and genrate ground truth
@@ -1642,7 +1693,7 @@ def train():
 
                 if 'rgb0' in extras:
                     # img_loss0_teacher = img2mse((1-rgb_mask) * extras_student['rgb0'], rgb_gt)
-                    img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_teacher, (1-extras['mask_map0']))
+                    img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_teacher, (1-extras['mask_map']))
                     loss += img_loss0_teacher * args.w_loss_teacher
 
             elif args.use_point_mask:
@@ -1819,7 +1870,7 @@ def train():
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode
             with torch.no_grad():
-                rgbs, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test)
+                rgbs, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, args=args)
             print('Done, saving', rgbs.shape, disps.shape)
             moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
             imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
@@ -1837,7 +1888,7 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', poses[i_test].shape)
             with torch.no_grad():
-                render_path(torch.Tensor(poses[i_test]).to(device), hwf, K, args.chunk, render_kwargs_test, gt_imgs=images[i_test], savedir=testsavedir)
+                render_path(torch.Tensor(poses[i_test]).to(device), hwf, K, args.chunk, render_kwargs_test, args=args, gt_imgs=images[i_test], savedir=testsavedir)
             print('Saved test set')
 
 
