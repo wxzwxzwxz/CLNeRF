@@ -138,6 +138,8 @@ class NeRF(nn.Module):
             elif args.expert_version == 'v3':
                 # d + 2
                 self.expert = expert_v2(D=args.expert_d, W=args.expert_w, input_dim=input_ch, output_dim=W, args=args)
+            elif args.expert_version == 'v4':
+                self.expert = expert_v4(D=args.expert_d, W=args.expert_w, input_ch_views=self.input_ch_views, input_dim=input_ch, output_dim=W, args=args)
 
         ### Implementation according to the official code release (https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L104-L105)
         self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
@@ -171,7 +173,8 @@ class NeRF(nn.Module):
                 self.emb_linear = nn.Linear(W//2, 64)
             
             if self.args.use_predict_mask:
-                self.mask_linear = nn.Linear(W//2, 1)
+                # self.mask_linear = nn.Linear(W//2, 1)
+                self.mask_linear = nn.Linear(W, 1)
         else:
             if args.lora and 'output_linear' in args.lora_layers:
                 self.output_linear = lora.Linear(W, output_ch, r=rank)
@@ -197,6 +200,8 @@ class NeRF(nn.Module):
                 expert_h = self.expert(h)
             elif self.args.expert_version == 'v3':
                 expert_h = self.expert(input_pts)
+            elif self.args.expert_version == 'v4':
+                expert_h = self.expert(input_pts, input_views)
 
         for i in range(1, len(self.pts_linears)):
             h = self.pts_linears[i](h)
@@ -226,8 +231,19 @@ class NeRF(nn.Module):
             if i in self.skips:
                 h = torch.cat([input_pts, h], -1)
         
+        
         if self.args.use_expert:
-            h += expert_h
+            if self.args.use_predict_mask:
+                mask = self.mask_linear(h)
+
+            if self.args.expert_version == 'v1' \
+                or self.args.expert_version == 'v2' \
+                or self.args.expert_version == 'v3':
+
+                if self.args.use_predict_mask:
+                    h = mask * expert_h + (1-mask) * h
+                else:
+                    h += expert_h
 
         if self.use_viewdirs:
             alpha = self.alpha_linear(h)
@@ -255,9 +271,15 @@ class NeRF(nn.Module):
             else:
                 outputs = torch.cat([rgb, alpha], -1)
 
+            if self.args.use_expert:
+                if self.args.expert_version == 'v4':
+                    if self.args.use_predict_mask:
+                        outputs = mask * expert_h + (1-mask) * outputs
+                    else:
+                        outputs = outputs + expert_h
+
             if self.args.use_predict_mask:
-                mask = self.mask_linear(h)
-                # outputs = outputs * mask
+                # mask = self.mask_linear(h)
                 outputs = torch.cat([outputs, mask], -1)
         else:
             outputs = self.output_linear(h)

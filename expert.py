@@ -105,6 +105,69 @@ class expert_v2(nn.Module):
         #     outputs = torch.cat([outputs, self.mask_linear(outputs)], -1)
         
         return outputs
+    
+
+class expert_v4(nn.Module):
+    ''' Input fts, output color and density
+    '''
+    def __init__(self, D=2, W=256, input_ch_views=3, input_dim=256, output_dim=256, args=None):
+        super().__init__()
+        # self.D = D
+        # self.W = W
+        self.args = args
+
+        # self.input_linears = nn.ModuleList([nn.Linear(input_dim, W)])
+        self.input_linears = nn.Linear(input_dim, W)
+        self.pts_linears = nn.ModuleList([nn.Linear(W, W) for i in range(D)])
+        # self.output_linears = nn.ModuleList([nn.Linear(W, output_dim)])
+        
+        self.feature_linear = nn.Linear(W, W)
+        self.alpha_linear = nn.Linear(W, 1)
+        self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
+        self.rgb_linear = nn.Linear(W//2, 3)
+
+        self.output_linears = nn.Linear(W, output_dim)
+
+        # if args.use_expert_predict_mask:
+        #     self.mask_linear = nn.Linear(W, 1)
+
+        # torch.nn.init.xavier_uniform_(self.input_linears.weight)
+        # if self.input_linears.bias is not None:
+        #     torch.nn.init.zeros_(self.input_linears.bias)
+        
+        # torch.nn.init.xavier_uniform_(self.output_linears.weight)
+        # if self.output_linears.bias is not None:
+        #     torch.nn.init.zeros_(self.output_linears.bias)
+
+        # for m in self.pts_linears:
+        #     if isinstance(m, nn.Linear):
+        #         torch.nn.init.xavier_uniform_(m.weight)
+        #         if m.bias is not None:
+        #             torch.nn.init.zeros_(m.bias)
+                
+    def forward(self, h, input_views):
+        h = self.input_linears(h)
+
+        # newly added
+        h = F.relu(h)
+
+        for i, l in enumerate(self.pts_linears):
+            h = self.pts_linears[i](h)
+            h = F.relu(h)
+
+        alpha = self.alpha_linear(h)
+        feature = self.feature_linear(h)
+
+        h = torch.cat([feature, input_views], -1)
+        
+        for i, l in enumerate(self.views_linears):
+            h = self.views_linears[i](h)
+            h = F.relu(h)
+
+        rgb = self.rgb_linear(h)
+        outputs = torch.cat([rgb, alpha], -1)
+
+        return outputs
 
 if __name__=='__main__':
     '''

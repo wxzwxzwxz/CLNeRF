@@ -874,7 +874,8 @@ def render_rays(ray_batch,
                 use_predict_mask=False,
                 render_kwargs_test_teacher=None,
                 render_kwargs_test_teacher_second=None, 
-                render_kwargs_test_mask=None
+                render_kwargs_test_mask=None,
+                stop_pdf_sampling=False,
                 ):
     """Volumetric rendering.
     Args:
@@ -974,13 +975,17 @@ def render_rays(ray_batch,
 
     rgb_map, disp_map, acc_map, weights, depth_map, mask_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest, use_predict_mask=use_predict_mask)
     if N_importance > 0:
-
         rgb_map_0, disp_map_0, acc_map_0 = rgb_map, disp_map, acc_map
         if use_predict_mask:
             mask_map_0 = mask_map
 
         z_vals_mid = .5 * (z_vals[...,1:] + z_vals[...,:-1])
-        z_samples = sample_pdf(z_vals_mid, weights[...,1:-1], N_importance, det=(perturb==0.), pytest=pytest)
+        
+        if stop_pdf_sampling:
+            z_samples = sample_pdf(z_vals_mid, torch.ones_like(weights[...,1:-1]), N_importance, det=(perturb==0.), pytest=pytest)
+        else:
+            z_samples = sample_pdf(z_vals_mid, weights[...,1:-1], N_importance, det=(perturb==0.), pytest=pytest)
+
         z_samples = z_samples.detach()
 
         z_vals, _ = torch.sort(torch.cat([z_vals, z_samples], -1), -1)
@@ -1601,6 +1606,7 @@ def train():
         rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                 verbose=i < 10, retraw=True,
                                                 use_predict_mask=args.use_predict_mask,
+                                                stop_pdf_sampling= i - start < 0,
                                                 **render_kwargs_train)
     
         if optimizer is not None:
@@ -1677,22 +1683,22 @@ def train():
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
                                                             use_predict_mask=args.use_predict_mask,
+                                                            stop_pdf_sampling= i - start < 0,
                                                             **render_kwargs_train)
                                                         
                 with torch.no_grad():
                     rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
+                                                            stop_pdf_sampling= i - start < 0,
                                                             **render_kwargs_test_teacher)
 
                     # rgb_gt = (1-rgb_mask) * rgb_teacher
 
-                # img_loss_teacher = img2mse((1-rgb_mask) * rgb_student, rgb_gt)
                 img_loss_teacher = img2mse_withmask(rgb_student, rgb_teacher, (1-extras['mask_map']))
                 
                 loss += img_loss_teacher * args.w_loss_teacher
 
                 if 'rgb0' in extras:
-                    # img_loss0_teacher = img2mse((1-rgb_mask) * extras_student['rgb0'], rgb_gt)
                     img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_teacher, (1-extras['mask_map']))
                     loss += img_loss0_teacher * args.w_loss_teacher
 
@@ -1703,12 +1709,14 @@ def train():
                                                         render_kwargs_test_teacher=render_kwargs_test_teacher,
                                                         render_kwargs_test_teacher_second=render_kwargs_test_teacher_second,
                                                         render_kwargs_test_mask=render_kwargs_test_mask,
+                                                        stop_pdf_sampling= i - start < 0,
                                                         **render_kwargs_train)
                 # loss_teacher = extras_student['point_error'][0] + extras_student['point_error0'][0]
                 # loss += loss_teacher * args.w_loss_teacher
                 with torch.no_grad():
                     rgb_mask, disp_mask, acc_mask, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
+                                                            stop_pdf_sampling= i - start < 0,
                                                             **render_kwargs_test_mask)
                 rgb_mask = torch.mean(rgb_mask, -1).unsqueeze(-1)
                 loss_teacher = torch.sum(extras_student['point_error'][0] * rgb_mask) / (torch.sum(rgb_mask) + 1e-6)
@@ -1722,14 +1730,17 @@ def train():
             else:
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
+                                                            stop_pdf_sampling= i - start < 0,
                                                             **render_kwargs_train)
                                                         
                 with torch.no_grad():
                     rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
+                                                            stop_pdf_sampling= i - start < 0,
                                                             **render_kwargs_test_teacher)
                     rgb_mask, disp_mask, acc_mask, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
+                                                            stop_pdf_sampling= i - start < 0,
                                                             **render_kwargs_test_mask)
                     # rgb_gt = (1-rgb_mask) * rgb_teacher
 
