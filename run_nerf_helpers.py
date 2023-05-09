@@ -172,14 +172,13 @@ class NeRF(nn.Module):
                 pass
                 self.emb_linear = nn.Linear(W//2, 64)
             
-            if self.args.use_predict_mask:
-                # self.mask_linear = nn.Linear(W//2, 1)
+            if self.args.use_predict_mask and not self.args.use_expert_predict_mask:
                 self.mask_linear = nn.Linear(W, 1)
         else:
             if args.lora and 'output_linear' in args.lora_layers:
                 self.output_linear = lora.Linear(W, output_ch, r=rank)
             else:
-                if self.args.use_predict_mask:
+                if self.args.use_predict_mask and not self.args.use_expert_predict_mask:
                     output_ch += 1
 
                 self.output_linear = nn.Linear(W, output_ch)
@@ -224,26 +223,45 @@ class NeRF(nn.Module):
                     residual = self.adapters[i](h)
                     h = h.add(residual)
 
-            h = F.relu(h)
+            if i != len(self.pts_linears)-1:
+                h = F.relu(h)
+
             if return_feat == True:
                 output_dict['pts_linears_'+str(i)] = h
 
             if i in self.skips:
                 h = torch.cat([input_pts, h], -1)
-        
-        
+
         if self.args.use_expert:
-            if self.args.use_predict_mask:
+            # relu or not
+            if not self.args.use_expert_predict_mask_merge_relu:
+                h = F.relu(h)
+
+            if self.args.use_predict_mask and not self.args.use_expert_predict_mask:
                 mask = self.mask_linear(h)
 
+            # merge old_feat and new_feat
             if self.args.expert_version == 'v1' \
                 or self.args.expert_version == 'v2' \
                 or self.args.expert_version == 'v3':
 
                 if self.args.use_predict_mask:
-                    h = mask * expert_h + (1-mask) * h
+                    if self.args.use_expert_predict_mask:
+                        mask = expert_h[..., -1:]
+                        h = mask * expert_h[..., :-1] + h
+                        # h = h - mask * expert_h[..., :-1]
+                    else:
+                        # h = mask * expert_h + (1-mask) * h
+                        h = mask * expert_h + h
+                        # h = h - mask * expert_h
                 else:
                     h += expert_h
+            
+            # relu or not
+            if self.args.use_expert_predict_mask_merge_relu:
+                h = F.relu(h)
+        else:
+            h = F.relu(h)
 
         if self.use_viewdirs:
             alpha = self.alpha_linear(h)
@@ -273,6 +291,7 @@ class NeRF(nn.Module):
 
             if self.args.use_expert:
                 if self.args.expert_version == 'v4':
+                    raise NotImplemented
                     if self.args.use_predict_mask:
                         outputs = mask * expert_h + (1-mask) * outputs
                     else:

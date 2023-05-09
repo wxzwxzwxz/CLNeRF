@@ -68,8 +68,8 @@ class expert_v2(nn.Module):
         # self.output_linears = nn.ModuleList([nn.Linear(W, output_dim)])
         self.output_linears = nn.Linear(W, output_dim)
 
-        # if args.use_expert_predict_mask:
-        #     self.mask_linear = nn.Linear(W, 1)
+        if args.use_expert_predict_mask:
+            self.mask_linear = nn.Linear(W, 1)
 
         # torch.nn.init.xavier_uniform_(self.input_linears.weight)
         # if self.input_linears.bias is not None:
@@ -96,13 +96,19 @@ class expert_v2(nn.Module):
             h = F.relu(h)
 
         outputs = self.output_linears(h)
-        # newly added
-        outputs = F.relu(outputs)
-        # print(outputs.mean(), outputs.max(), outputs.min())
-        # input()
-
-        # if self.args.use_expert_predict_mask:
-        #     outputs = torch.cat([outputs, self.mask_linear(outputs)], -1)
+        
+        if self.args.use_expert_predict_mask:
+            mask = self.mask_linear(h)
+            if self.args.use_expert_predict_mask_worelu:
+                pass
+            else:
+                outputs = F.relu(outputs)
+            outputs = torch.cat([outputs, mask], -1)
+        else:
+            # newly added
+            outputs = F.relu(outputs)
+            # print(outputs.mean(), outputs.max(), outputs.min())
+            # input()
         
         return outputs
     

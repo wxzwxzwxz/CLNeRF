@@ -1241,6 +1241,10 @@ def config_parser():
     parser.add_argument("--expert_w", type=int, default=256)
     parser.add_argument("--expert_d", type=int, default=2)
     parser.add_argument("--use_predict_mask", type=bool, default=False)
+    parser.add_argument("--use_expert_predict_mask", type=bool, default=True)
+    parser.add_argument("--use_expert_predict_mask_worelu", type=bool, default=True)
+    parser.add_argument("--use_expert_predict_mask_merge_relu", type=bool, default=True)
+    
 
     parser.add_argument("--load_mask", type=bool, default=False)
     parser.add_argument("--load_mask_dir", type=str, default=None)
