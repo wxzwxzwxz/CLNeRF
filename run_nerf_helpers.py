@@ -248,12 +248,12 @@ class NeRF(nn.Module):
                 if self.args.use_predict_mask:
                     if self.args.use_expert_predict_mask:
                         mask = expert_h[..., -1:]
-                        h = mask * expert_h[..., :-1] + h
-                        # h = h - mask * expert_h[..., :-1]
+                        # h = mask * expert_h[..., :-1] + h
+                        h = h - mask * expert_h[..., :-1]
                     else:
                         # h = mask * expert_h + (1-mask) * h
-                        h = mask * expert_h + h
-                        # h = h - mask * expert_h
+                        # h = mask * expert_h + h
+                        h = h - mask * expert_h
                 else:
                     h += expert_h
             

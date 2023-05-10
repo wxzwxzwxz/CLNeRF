@@ -1241,9 +1241,9 @@ def config_parser():
     parser.add_argument("--expert_w", type=int, default=256)
     parser.add_argument("--expert_d", type=int, default=2)
     parser.add_argument("--use_predict_mask", type=bool, default=False)
-    parser.add_argument("--use_expert_predict_mask", type=bool, default=True)
-    parser.add_argument("--use_expert_predict_mask_worelu", type=bool, default=True)
-    parser.add_argument("--use_expert_predict_mask_merge_relu", type=bool, default=True)
+    parser.add_argument("--use_expert_predict_mask", type=bool, default=False)
+    parser.add_argument("--use_expert_predict_mask_worelu", type=bool, default=False)
+    parser.add_argument("--use_expert_predict_mask_merge_relu", type=bool, default=False)
     
 
     parser.add_argument("--load_mask", type=bool, default=False)
@@ -1257,7 +1257,7 @@ def config_parser():
 def train():
     parser = config_parser()
     args = parser.parse_args()
-
+    
     # Load data
     K = None
     if args.dataset_type == 'llff':
@@ -1409,7 +1409,7 @@ def train():
         f = os.path.join(basedir, expname, 'config.txt')
         with open(f, 'w') as file:
             file.write(open(args.config, 'r').read())
-
+    
     # Create nerf model
     if args.adapter_layers:
         render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, optimizer_second = create_nerf(args, ckpt_path=args.ckpt_path)
@@ -1417,7 +1417,7 @@ def train():
         render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, optimizer_second = create_nerf(args, ckpt_path=args.ckpt_path)
     else:
         render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, _ = create_nerf(args, ckpt_path=args.ckpt_path)
-
+    
     global_step = start
     lr_global_step = 0
     if args.adapter_layers:
