@@ -604,6 +604,8 @@ def create_nerf(args, ckpt_path=None):
     return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, optimizer_second
 
 def create_teacher_nerf(args, ckpt_path=None):
+    ''' load original nerf
+    '''
     embed_fn, input_ch = get_embedder(args.multires, args.i_embed)
 
     input_ch_views = 0
@@ -647,6 +649,93 @@ def create_teacher_nerf(args, ckpt_path=None):
         model.load_state_dict(ckpt['network_fn_state_dict'], strict=False)
         if model_fine is not None:
             model_fine.load_state_dict(ckpt['network_fine_state_dict'], strict=False)
+
+    network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
+                                                                embed_fn=embed_fn,
+                                                                embeddirs_fn=embeddirs_fn,
+                                                                netchunk=args.netchunk,
+                                                                return_feat=args.return_feat)
+    render_kwargs_train = {
+        'network_query_fn' : network_query_fn,
+        'perturb' : args.perturb,
+        'N_importance' : args.N_importance,
+        'network_fine' : model_fine,
+        'N_samples' : args.N_samples,
+        'network_fn' : model,
+        'use_viewdirs' : args.use_viewdirs,
+        'white_bkgd' : args.white_bkgd,
+        'raw_noise_std' : args.raw_noise_std,
+    }
+
+    # NDC only good for LLFF-style forward facing data
+    if args.dataset_type != 'llff' or args.no_ndc:
+        print('Not ndc!')
+        render_kwargs_train['ndc'] = False
+        render_kwargs_train['lindisp'] = args.lindisp
+
+    render_kwargs_test = {k : render_kwargs_train[k] for k in render_kwargs_train}
+    render_kwargs_test['perturb'] = False
+    render_kwargs_test['raw_noise_std'] = 0.
+
+    return render_kwargs_train, render_kwargs_test
+
+def create_teacher_nerf_v2(args, ckpt_path=None):
+    """ load a nerf with branch
+    """
+    embed_fn, input_ch = get_embedder(args.multires, args.i_embed)
+
+    input_ch_views = 0
+    embeddirs_fn = None
+    if args.use_viewdirs:
+        embeddirs_fn, input_ch_views = get_embedder(args.multires_views, args.i_embed)
+    output_ch = 5 if args.N_importance > 0 else 4
+    skips = [4]
+    model = NeRF(D=args.netdepth, W=args.netwidth,
+                 input_ch=input_ch, output_ch=output_ch, skips=skips,
+                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
+
+    model_fine = None
+    if args.N_importance > 0:
+        model_fine = NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
+                          input_ch=input_ch, output_ch=output_ch, skips=skips,
+                          input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs, args=args).to(device)
+    
+    set_grad_false_except_keyword(model, model_fine, [])
+
+    # Load checkpoints
+    if ckpt_path is not None:
+        ckpts = [ckpt_path]
+    elif args.ft_path is not None and args.ft_path!='None':
+        ckpts = [args.ft_path]
+    else:
+        ckpts = [os.path.join(args.basedir, args.expname, f) for f in sorted(os.listdir(os.path.join(args.basedir, args.expname))) if 'tar' in f and 'adaptor.tar' not in f]
+
+    if len(ckpts) > 0 and not args.no_reload:
+        ckpt_path = ckpts[-1]
+        print('Reloading from', ckpt_path)
+        ckpt = torch.load(ckpt_path)
+
+        # Load model
+        model.load_state_dict(ckpt['network_fn_state_dict'], strict=False)
+        if model_fine is not None:
+            model_fine.load_state_dict(ckpt['network_fine_state_dict'], strict=False)
+
+        if args.adapter_layers:
+            try:
+                ckpt_adaptor = torch.load(ckpt_path.replace('.tar', '_adaptor.tar'))
+                model.adapters.load_state_dict(ckpt_adaptor['network_fn_adapters_state_dict'], strict=False)
+                if model_fine is not None:
+                    model_fine.adapters.load_state_dict(ckpt_adaptor['network_fine_adapters_state_dict'], strict=False)
+            except Exception as e:
+                print(e)
+        elif args.use_expert:
+            try:
+                ckpt_expert = torch.load(ckpt_path.replace('.tar', '_expert.tar'))
+                model.expert.load_state_dict(ckpt_expert['network_fn_expert_state_dict'], strict=False)
+                if model_fine is not None:
+                    model_fine.expert.load_state_dict(ckpt_expert['network_fine_expert_state_dict'], strict=False)
+            except Exception as e:
+                print(e)
 
     network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
                                                                 embed_fn=embed_fn,
@@ -1182,6 +1271,7 @@ def config_parser():
     parser.add_argument("--scene_scale", type=float, default=None)
     parser.add_argument("--use_teacher_nerf", action='store_true')
     parser.add_argument("--use_teacher_nerf_second", action='store_true')
+    parser.add_argument("--use_teacher_nerf_with_branch", action='store_true')
     parser.add_argument("--use_point_mask", action='store_true')
     parser.add_argument("--datadir_teacher", type=str, default='./data/llff/fern', 
                         help='input data directory')
@@ -1442,12 +1532,18 @@ def train():
 
     # Create teacher nerf model
     if args.use_teacher_nerf:
-        # _, render_kwargs_test_teacher, _, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path)
-        _, render_kwargs_test_teacher = create_teacher_nerf(args, ckpt_path=args.ft_teacher_path)
+        if args.use_teacher_nerf_with_branch:
+            _, render_kwargs_test_teacher = create_teacher_nerf_v2(args, ckpt_path=args.ft_teacher_path)
+        else:
+            # _, render_kwargs_test_teacher, _, _, _, _ = create_nerf(args, ckpt_path=args.ft_teacher_path)
+            _, render_kwargs_test_teacher = create_teacher_nerf(args, ckpt_path=args.ft_teacher_path)
         
         render_kwargs_test_teacher.update(bds_dict)
-        render_kwargs_test_mask = create_mask_nerf(args, ckpt_path=args.ft_mask_path)
-        render_kwargs_test_mask.update(bds_dict)
+        if args.use_predict_mask:
+            render_kwargs_test_mask = None
+        else:
+            render_kwargs_test_mask = create_mask_nerf(args, ckpt_path=args.ft_mask_path)
+            render_kwargs_test_mask.update(bds_dict)
     else:
         render_kwargs_test_teacher = None
         render_kwargs_test_mask = None
