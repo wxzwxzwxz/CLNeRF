@@ -99,7 +99,8 @@ def eval_image(args):
     sub_list += ['renderonly_test_stage1_sofa1_209999']
     sub_list += ['renderonly_test_stage1_sofa2_209999']
     sub_list += ['renderonly_test_stage1_sofa3_209999']
-    sub_list += ['renderonly_test_stage1_table_simple_209999']
+    sub_list += ['renderonly_test_stage1_table_209999']
+    sub_list += ['renderonly_test_stage1_newtask_209999']
 
     if 'lpips' in args.metric:
         loss_fn = lpips.LPIPS(net='alex',version='0.1',model_path='lpips_models/lpips_weights_v0.1/alex.pth').cuda()
