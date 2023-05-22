@@ -284,7 +284,7 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             fts_train = None
             fts_val = None
             fts_test = None
-
+        print('pose_len:',len(poses))
         return poses, render_poses, [H, W, focal], i_split, all_paths, fts_train, fts_test
 
 

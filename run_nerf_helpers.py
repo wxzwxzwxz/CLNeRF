@@ -248,12 +248,17 @@ class NeRF(nn.Module):
                 if self.args.use_predict_mask:
                     if self.args.use_expert_predict_mask:
                         mask = expert_h[..., -1:]
-                        # h = mask * expert_h[..., :-1] + h
-                        h = h - mask * expert_h[..., :-1]
+                        if self.args.use_expert_featfusion == 'v1':
+                            h = mask * expert_h[..., :-1] + (1-mask) * h
+                        elif self.args.use_expert_featfusion == 'v2':
+                            h = mask * expert_h[..., :-1] + h
+                        # h = h - mask * expert_h[..., :-1]
                     else:
-                        # h = mask * expert_h + (1-mask) * h
-                        # h = mask * expert_h + h
-                        h = h - mask * expert_h
+                        if self.args.use_expert_featfusion == 'v1':
+                            h = mask * expert_h + (1-mask) * h
+                        elif self.args.use_expert_featfusion == 'v2':
+                            h = mask * expert_h + h
+                        # h = h - mask * expert_h
                 else:
                     h += expert_h
             
@@ -292,10 +297,10 @@ class NeRF(nn.Module):
             if self.args.use_expert:
                 if self.args.expert_version == 'v4':
                     raise NotImplemented
-                    if self.args.use_predict_mask:
-                        outputs = mask * expert_h + (1-mask) * outputs
-                    else:
-                        outputs = outputs + expert_h
+                    # if self.args.use_predict_mask:
+                    #     outputs = mask * expert_h + (1-mask) * outputs
+                    # else:
+                    #     outputs = outputs + expert_h
 
             if self.args.use_predict_mask:
                 # mask = self.mask_linear(h)

@@ -1333,7 +1333,6 @@ def config_parser():
     parser.add_argument("--expert_d", type=int, default=2)
     parser.add_argument("--use_predict_mask", type=bool, default=False)
     parser.add_argument("--use_expert_predict_mask", type=bool, default=False)
-    parser.add_argument("--use_expert_featfusion", type=str, default='v1')
     parser.add_argument("--use_expert_predict_mask_worelu", type=bool, default=False)
     parser.add_argument("--use_expert_predict_mask_merge_relu", type=bool, default=False)
     
@@ -1363,28 +1362,25 @@ def train():
         # images, poses, bds, render_poses, i_test = load_llff_data(args.datadir, args.factor,
         #                                                           recenter=True, bd_factor=.75,
         #                                                           spherify=args.spherify)
-        images, poses, bds, render_poses, i_test, output_paths, images_mask = load_llff_data(args, args.datadir, args.factor,
+        images, poses, bds, render_poses, i_test,output_paths = load_llff_data(args.datadir, args.factor,
                                                                   recenter=True, bd_factor=.75,
                                                                   spherify=args.spherify, recenter_dir=args.recenter_dir)
+
 
         hwf = poses[0,:3,-1]
         poses = poses[:,:3,:4]
         print('Loaded llff', images.shape, render_poses.shape, hwf, args.datadir)
+        if not isinstance(i_test, list):
+            i_test = [i_test]
 
-        if args.render_mask_only:
-            i_test = np.array([i for i in np.arange(int(images.shape[0]))])
-        else:
-            if not isinstance(i_test, list):
-                i_test = [i_test]
-
-            if args.llffhold > 0:
-                print('Auto LLFF holdout,', args.llffhold)
-                i_test = np.arange(images.shape[0])[::args.llffhold]
+        if args.llffhold > 0:
+            print('Auto LLFF holdout,', args.llffhold)
+            i_test = np.arange(images.shape[0])[::args.llffhold]
 
         i_val = i_test
         i_train = np.array([i for i in np.arange(int(images.shape[0])) if
                         (i not in i_test and i not in i_val)])
-
+        # print(i_test)
         print('DEFINING BOUNDS')
         if args.no_ndc:
             near = np.ndarray.min(bds) * .9
@@ -1394,27 +1390,6 @@ def train():
             near = 0.
             far = 1.
         print('NEAR FAR', near, far)
-
-        if args.use_teacher_nerf:
-            # poses_teacher, render_poses_teacher, _, i_split_teacher, _, fts_train, fts_test
-            # input('hihihi')
-            poses_teacher, i_test_teacher = load_llff_data(args, args.datadir, args.factor,
-                                                                            load_imgs=False, 
-                                                                            recenter=True, bd_factor=.75,
-                                                                            spherify=args.spherify, recenter_dir=args.recenter_dir)
-            if args.render_mask_only:
-                i_test_teacher = np.array([i for i in np.arange(int(poses_teacher.shape[0]))])
-            else:
-                if not isinstance(i_test_teacher, list):
-                    i_test_teacher = [i_test_teacher]
-
-                if args.llffhold > 0:
-                    print('Auto LLFF holdout,', args.llffhold)
-                    i_test_teacher = np.arange(poses_teacher.shape[0])[::args.llffhold]
-
-            i_val_teacher = i_test_teacher
-            i_train_teacher = np.array([i for i in np.arange(int(poses_teacher.shape[0])) if
-                            (i not in i_test_teacher and i not in i_val)])
 
     elif args.dataset_type == 'blender':
         if args.render_wo_images:
@@ -1472,7 +1447,6 @@ def train():
             #     images = images[...,:3]
 
         if args.use_teacher_nerf_second:
-            pass
             poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _, fts_train, fts_test, _ = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W,
                                                                                                                 transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
                                                                                                                 trainskip=args.trainskip_teacher, spherical_radius=args.spherical_radius,
@@ -1851,7 +1825,8 @@ def train():
                 if args.use_maskloss_reg_loss:
                     loss += torch.mean(torch.abs((extras_student['mask_map']))) * args.w_maskloss_reg_loss
                     loss += torch.mean(torch.abs((extras_student['mask_map0']))) * args.w_maskloss_reg_loss
-
+                m_mean=torch.mean(extras_student['mask_map']).cpu().item()
+                m_mean0=torch.mean(extras_student['mask_map0']).cpu().item()
 
             elif args.use_point_mask:
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
@@ -2056,7 +2031,7 @@ def train():
     
         if i%args.i_print==0:
             try:
-                tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
+                tqdm.write(f"[TRAIN] Iter: {i} sum_Loss: {loss.item()} m_mean:{m_mean} 1-mmean:{1-m_mean} m_mean0:{m_mean0} 1-mmean0:{1-m_mean0} PSNR: {psnr.item()} img_loss_teacher: {img_loss_teacher.item()} mask_loss: {loss_mask.item()} ph_loss: {img_loss.item()}")
             except KeyboardInterrupt:
                 break
             except:

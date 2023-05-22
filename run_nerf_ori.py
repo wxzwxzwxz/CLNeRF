@@ -932,7 +932,7 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
         mask = torch.sigmoid(raw[...,-1:])
         mask_map = torch.sum(weights[...,None] * mask, -2)  # [N_rays, 3]
     else:
-        mask_map = None
+        mask_map = None 
 
     depth_map = torch.sum(weights * z_vals, -1)
     disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
@@ -1294,7 +1294,6 @@ def config_parser():
     parser.add_argument('--transforms_test', nargs='+', default=None)
     parser.add_argument('--transforms_test_ratio', nargs='+', default=None)
     parser.add_argument("--trainskip", type=int, default=1)
-    parser.add_argument("--trainskip_teacher", type=int, default=1)
     parser.add_argument("--add_dino", type=bool, default=False)
     parser.add_argument("--dino_dir", type=str, default='')
     parser.add_argument("--ckpt_path", type=str, default=None)
@@ -1333,7 +1332,6 @@ def config_parser():
     parser.add_argument("--expert_d", type=int, default=2)
     parser.add_argument("--use_predict_mask", type=bool, default=False)
     parser.add_argument("--use_expert_predict_mask", type=bool, default=False)
-    parser.add_argument("--use_expert_featfusion", type=str, default='v1')
     parser.add_argument("--use_expert_predict_mask_worelu", type=bool, default=False)
     parser.add_argument("--use_expert_predict_mask_merge_relu", type=bool, default=False)
     
@@ -1342,11 +1340,6 @@ def config_parser():
     parser.add_argument("--load_mask_dir", type=str, default=None)
     parser.add_argument("--mask_ext", type=str, default=None)
     parser.add_argument("--w_mask_loss", type=float, default=0.1)
-
-    parser.add_argument("--use_maskloss_reg_loss", type=bool, default=False)
-    parser.add_argument("--w_maskloss_reg_loss", type=float, default=1.0)
-
-    parser.add_argument("--recenter_dir", type=str, default=None)
     
     return parser
 
@@ -1354,32 +1347,22 @@ def config_parser():
 def train():
     parser = config_parser()
     args = parser.parse_args()
-
-    
     
     # Load data
     K = None
     if args.dataset_type == 'llff':
-        # images, poses, bds, render_poses, i_test = load_llff_data(args.datadir, args.factor,
-        #                                                           recenter=True, bd_factor=.75,
-        #                                                           spherify=args.spherify)
-        images, poses, bds, render_poses, i_test, output_paths, images_mask = load_llff_data(args, args.datadir, args.factor,
+        images, poses, bds, render_poses, i_test = load_llff_data(args.datadir, args.factor,
                                                                   recenter=True, bd_factor=.75,
-                                                                  spherify=args.spherify, recenter_dir=args.recenter_dir)
-
+                                                                  spherify=args.spherify)
         hwf = poses[0,:3,-1]
         poses = poses[:,:3,:4]
         print('Loaded llff', images.shape, render_poses.shape, hwf, args.datadir)
+        if not isinstance(i_test, list):
+            i_test = [i_test]
 
-        if args.render_mask_only:
-            i_test = np.array([i for i in np.arange(int(images.shape[0]))])
-        else:
-            if not isinstance(i_test, list):
-                i_test = [i_test]
-
-            if args.llffhold > 0:
-                print('Auto LLFF holdout,', args.llffhold)
-                i_test = np.arange(images.shape[0])[::args.llffhold]
+        if args.llffhold > 0:
+            print('Auto LLFF holdout,', args.llffhold)
+            i_test = np.arange(images.shape[0])[::args.llffhold]
 
         i_val = i_test
         i_train = np.array([i for i in np.arange(int(images.shape[0])) if
@@ -1394,27 +1377,6 @@ def train():
             near = 0.
             far = 1.
         print('NEAR FAR', near, far)
-
-        if args.use_teacher_nerf:
-            # poses_teacher, render_poses_teacher, _, i_split_teacher, _, fts_train, fts_test
-            # input('hihihi')
-            poses_teacher, i_test_teacher = load_llff_data(args, args.datadir, args.factor,
-                                                                            load_imgs=False, 
-                                                                            recenter=True, bd_factor=.75,
-                                                                            spherify=args.spherify, recenter_dir=args.recenter_dir)
-            if args.render_mask_only:
-                i_test_teacher = np.array([i for i in np.arange(int(poses_teacher.shape[0]))])
-            else:
-                if not isinstance(i_test_teacher, list):
-                    i_test_teacher = [i_test_teacher]
-
-                if args.llffhold > 0:
-                    print('Auto LLFF holdout,', args.llffhold)
-                    i_test_teacher = np.arange(poses_teacher.shape[0])[::args.llffhold]
-
-            i_val_teacher = i_test_teacher
-            i_train_teacher = np.array([i for i in np.arange(int(poses_teacher.shape[0])) if
-                            (i not in i_test_teacher and i not in i_val)])
 
     elif args.dataset_type == 'blender':
         if args.render_wo_images:
@@ -1440,7 +1402,6 @@ def train():
                     images_mask = images_mask[..., :3]
                 
         print('Loaded blender', poses.shape, render_poses.shape, hwf, args.datadir)
-        print(args.w_mask_loss,args.w_loss_teacher)
         i_train, i_val, i_test = i_split
 
         if args.near:
@@ -1453,7 +1414,7 @@ def train():
         if args.use_teacher_nerf:
             poses_teacher, render_poses_teacher, _, i_split_teacher, _, fts_train, fts_test = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W, ext=args.ext,
                                                                                             transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
-                                                                                            trainskip=args.trainskip_teacher, spherical_radius=args.spherical_radius,
+                                                                                            trainskip=args.trainskip, spherical_radius=args.spherical_radius,
                                                                                             transforms_train_ratio=args.transforms_train_ratio,
                                                                                             transforms_test_ratio=args.transforms_test_ratio)
             print('Loaded blender for teacher', poses_teacher.shape, render_poses_teacher.shape, args.datadir_teacher)
@@ -1472,15 +1433,14 @@ def train():
             #     images = images[...,:3]
 
         if args.use_teacher_nerf_second:
-            pass
             poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _, fts_train, fts_test, _ = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W,
                                                                                                                 transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
-                                                                                                                trainskip=args.trainskip_teacher, spherical_radius=args.spherical_radius,
+                                                                                                                trainskip=args.trainskip, spherical_radius=args.spherical_radius,
                                                                                                                 transforms_train_ratio=args.transforms_train_ratio,
                                                                                                                 transforms_test_ratio=args.transforms_test_ratio)
             print('Loaded blender for second teacher', poses_teacher_second.shape, render_poses_teacher_second.shape, args.datadir_teacher_second)
             i_train_teacher_second, _, _ = i_split_teacher_second
-        # print(i_split)
+
     elif args.dataset_type == 'LINEMOD':
         images, poses, render_poses, hwf, K, i_split, near, far = load_LINEMOD_data(args.datadir, args.half_res, args.testskip)
         print(f'Loaded LINEMOD, images shape: {images.shape}, hwf: {hwf}, K: {K}')
@@ -1522,12 +1482,6 @@ def train():
         ])
 
     if args.render_test:
-        
-        # if type(i_test)==list:
-        
-        if type(output_paths)==list:
-            output_paths=np.array(output_paths)
-        print(type(output_paths))
         render_poses = np.array(poses[i_test])
         output_paths = output_paths[i_test]
 
@@ -1823,7 +1777,6 @@ def train():
 
         if args.use_teacher_nerf:
             # randomly sample rays and genrate ground truth
-            #print('i_train_teacher',i_train_teacher)
             batch_rays = sample_rays(args, hwf, K, i, i_train_teacher, args.N_rand_teacher, poses_teacher, start)
             
             if args.use_predict_mask:
@@ -1840,18 +1793,14 @@ def train():
                                                             **render_kwargs_test_teacher)
 
                     # rgb_gt = (1-rgb_mask) * rgb_teacher
-                    
-                img_loss_teacher = img2mse_withmask(rgb_student, rgb_teacher, (1-extras_student['mask_map']))
+
+                img_loss_teacher = img2mse_withmask(rgb_student, rgb_teacher, (1-extras['mask_map']))
+                
                 loss += img_loss_teacher * args.w_loss_teacher
 
                 if 'rgb0' in extras:
-                    img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_teacher, (1-extras_student['mask_map0']))
+                    img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_teacher, (1-extras['mask_map']))
                     loss += img_loss0_teacher * args.w_loss_teacher
-
-                if args.use_maskloss_reg_loss:
-                    loss += torch.mean(torch.abs((extras_student['mask_map']))) * args.w_maskloss_reg_loss
-                    loss += torch.mean(torch.abs((extras_student['mask_map0']))) * args.w_maskloss_reg_loss
-
 
             elif args.use_point_mask:
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
@@ -1897,6 +1846,7 @@ def train():
 
                 # img_loss_teacher = img2mse((1-rgb_mask) * rgb_student, rgb_gt)
                 img_loss_teacher = img2mse_withmask(rgb_student, rgb_teacher, (1-rgb_mask))
+                
                 loss += img_loss_teacher * args.w_loss_teacher
 
                 if 'rgb0' in extras:

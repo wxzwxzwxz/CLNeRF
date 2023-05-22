@@ -7,6 +7,7 @@ import os, imageio
 
 def _minify(basedir, factors=[], resolutions=[]):
     needtoload = False
+    # import pdb; pdb.set_trace()
     for r in factors:
         imgdir = os.path.join(basedir, 'images_{}'.format(r))
         if not os.path.exists(imgdir):
@@ -55,11 +56,8 @@ def _minify(basedir, factors=[], resolutions=[]):
             check_output('rm {}/*.{}'.format(imgdir, ext), shell=True)
             print('Removed duplicates')
         print('Done')
-            
-        
-        
-        
-def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
+
+def _load_data(args, basedir, factor=None, width=None, height=None, load_imgs=True, is_recenter=False):
     
     poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
     poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])
@@ -67,6 +65,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
     
     img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
             if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
+
     sh = imageio.imread(img0).shape
     
     sfx = ''
@@ -94,6 +93,9 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
         return
     
     imgfiles = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir)) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
+    
+    all_path=[l.split('/')[-1] for l in imgfiles]
+    #print(all_path)
     if poses.shape[-1] != len(imgfiles):
         print( 'Mismatch between imgs {} and poses {} !!!!'.format(len(imgfiles), poses.shape[-1]) )
         return
@@ -110,17 +112,20 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
             return imageio.imread(f, ignoregamma=True)
         else:
             return imageio.imread(f)
-        
+
     imgs = imgs = [imread(f)[...,:3]/255. for f in imgfiles]
     imgs = np.stack(imgs, -1)  
-    
-    print('Loaded image data', imgs.shape, poses[:,-1,0])
-    return poses, bds, imgs
 
-    
-            
-            
-    
+    if args.load_mask and is_recenter == False:
+        # fname_mask = os.path.join(args.load_mask_dir, frame['file_path'].replace('train', 'train_' + args.mask_ext).replace('test', 'test_' + args.mask_ext) + ext)
+        imgfiles_mask = [os.path.join(args.load_mask_dir, args.mask_ext, f) for f in sorted(os.listdir(imgdir)) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
+        imgs_mask = [imread(f)[...,:3]/255. for f in imgfiles_mask]
+        imgs_mask = np.stack(imgs_mask, -1)
+    else:
+        imgs_mask = None
+
+    print('Loaded image data', imgs.shape, poses[:,-1,0])
+    return poses, bds, imgs, imgs_mask, all_path
 
 def normalize(x):
     return x / np.linalg.norm(x)
@@ -163,12 +168,16 @@ def render_path_spiral(c2w, up, rads, focal, zdelta, zrate, rots, N):
     
 
 
-def recenter_poses(poses):
+def recenter_poses(poses, poses_ori=None):
 
     poses_ = poses+0
     bottom = np.reshape([0,0,0,1.], [1,4])
-    c2w = poses_avg(poses)
-    c2w = np.concatenate([c2w[:3,:4], bottom], -2)
+    if poses_ori is None:
+        c2w = poses_avg(poses)
+        c2w = np.concatenate([c2w[:3,:4], bottom], -2)
+    else:
+        c2w = poses_avg(poses_ori)
+        c2w = np.concatenate([c2w[:3,:4], bottom], -2)
     bottom = np.tile(np.reshape(bottom, [1,1,4]), [poses.shape[0],1,1])
     poses = np.concatenate([poses[:,:3,:4], bottom], -2)
 
@@ -240,32 +249,55 @@ def spherify_poses(poses, bds):
     return poses_reset, new_poses, bds
     
 
-def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_zflat=False):
+def load_llff_data(args, basedir, 
+                    factor=8, 
+                    load_imgs=True,
+                    recenter=True, bd_factor=.75, spherify=False, path_zflat=False, recenter_dir=None):
     
+    #print(basedir)
+    if load_imgs:
+        poses, bds, imgs, imgs_mask, all_path = _load_data(args, basedir, factor=factor) # factor=8 downsamples original imgs by 8x
+        imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
+        images = imgs
+        images = images.astype(np.float32)
+        if imgs_mask is not None:
+            imgs_mask = np.moveaxis(imgs_mask, -1, 0).astype(np.float32)
+    else:
+        poses, bds = _load_data(args, basedir, factor=factor, load_imgs=load_imgs)
 
-    poses, bds, imgs = _load_data(basedir, factor=factor) # factor=8 downsamples original imgs by 8x
     print('Loaded', basedir, bds.min(), bds.max())
-    
+
     # Correct rotation matrix ordering and move variable dim to axis 0
     poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
     poses = np.moveaxis(poses, -1, 0).astype(np.float32)
-    imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
-    images = imgs
     bds = np.moveaxis(bds, -1, 0).astype(np.float32)
     
     # Rescale if bd_factor is provided
     sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
     poses[:,:3,3] *= sc
     bds *= sc
-    
+
+    if recenter_dir is not None:
+        poses_r, bds_r, _, _, _ = _load_data(args, recenter_dir, factor=factor, is_recenter=True) # factor=8 downsamples original imgs by 8x
+        
+        # Correct rotation matrix ordering and move variable dim to axis 0
+        poses_r = np.concatenate([poses_r[:, 1:2, :], -poses_r[:, 0:1, :], poses_r[:, 2:, :]], 1)
+        poses_r = np.moveaxis(poses_r, -1, 0).astype(np.float32)
+        bds_r = np.moveaxis(bds_r, -1, 0).astype(np.float32)
+        
+        # Rescale if bd_factor is provided
+        sc_r = 1. if bd_factor is None else 1./(bds_r.min() * bd_factor)
+        poses_r[:,:3,3] *= sc_r
+    else:
+        None
+
     if recenter:
-        poses = recenter_poses(poses)
+        poses = recenter_poses(poses, poses_ori=poses_r)
         
     if spherify:
         poses, render_poses, bds = spherify_poses(poses, bds)
 
     else:
-        
         c2w = poses_avg(poses)
         print('recentered', c2w.shape)
         print(c2w[:3,:4])
@@ -303,17 +335,17 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     render_poses = np.array(render_poses).astype(np.float32)
 
     c2w = poses_avg(poses)
-    print('Data:')
-    print(poses.shape, images.shape, bds.shape)
+    # print('Data:')
+    # print(poses.shape, images.shape, bds.shape)
     
     dists = np.sum(np.square(c2w[:3,3] - poses[:,:3,3]), -1)
     i_test = np.argmin(dists)
     print('HOLDOUT view is', i_test)
     
-    images = images.astype(np.float32)
+    
     poses = poses.astype(np.float32)
 
-    return images, poses, bds, render_poses, i_test
-
-
-
+    if load_imgs:
+        return images, poses, bds, render_poses, i_test, all_path, imgs_mask
+    else:
+        return poses, i_test
