@@ -1609,6 +1609,10 @@ def train():
 
             rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, args=args, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor, render_mask_only=args.render_mask_only, output_paths=output_paths, render_mask_threshold=args.render_mask_threshold)
             print('Done rendering', testsavedir)
+
+            moviebase = testsavedir
+            imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
+            # imageio.mimwrite(moviebase + 'disp.mp4', to8b( / np.max(disps)), fps=30, quality=8)
             # imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
 
             return

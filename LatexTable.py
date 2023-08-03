@@ -122,19 +122,25 @@ if __name__ == '__main__':
 
     # # A	
     # results_table1['w/o Expert'] = [31.243, 23.417, 30.358, 27.478, 31.231, 30.857, 31.327, 30.002, 30.385, 24.634]
-    results_table1['w/o Expert'] = [31.243, 23.417, 30.358, 27.478, 31.231, 30.857, 31.327, 30.002, 29.385, 24.297]
-    results_table1['w/o KD'] = [29.812, 24.096, 29.273, 34.574, 23.903, 29.924, 23.468, 28.974, 18.629, 28.194]
+    # results_table1['w/o Expert'] = [31.243, 23.417, 30.358, 27.478, 31.231, 30.857, 31.327, 30.002, 29.385, 24.297]
+    # results_table1['w/o KD'] = [29.812, 24.096, 29.273, 34.574, 23.903, 29.924, 23.468, 28.974, 18.629, 28.194]
     # results_table1['w/o $L_{m}$'] = [-1, -1, -1, -1, -1, -1, -1, -1, 33.376, 29.739]
     # results_table1['w/o $L_{m}$'] = [-1, -1, -1, -1, -1, -1, -1, -1, 33.376, 29.739]
-    results_table1['w/o $L_{m}$'] = [31.084, 24.918, 30.986, 31.735, 31.898, 28.637, 32.627, 28.534, 30.699, 28.054]
-    results_table1['Ours'] = [32.328, 25.293, 32.429, 34.773, 33.297, 29.970, 33.332, 29.816, 33.376, 29.739]
+    # results_table1['w/o $L_{m}$'] = [31.084, 24.918, 30.986, 31.735, 31.898, 28.637, 32.627, 28.534, 30.699, 28.054]
+    # results_table1['Ours'] = [32.328, 25.293, 32.429, 34.773, 33.297, 29.970, 33.332, 29.816, 33.376, 29.739]
 
     # B
-    # results_table1['FT'] = [26.831, 25.475, 31.059, 23.707, 23.024, 23.334, 28.966, 25.131, 0.000, 0.000]
-    # results_table1['MR'] = [25.942, 28.995, 31.045, 29.001, 21.871, 28.851, 29.681, 28.971, 0.000, 0.000]
-    # results_table1['DyNeRF'] = [27.514, 29.251, 23.389, 29.083, 23.150, 28.838, 23.251, 29.161, 0.000, 0.000]
-    # results_table1['Ours'] = [27.023, 27.885, 30.653, 28.809, 0.000, 0.000, 29.693, 28.425, 0.000, 0.000]
+    results_table1['FT'] = [25.475, 26.831, 23.707, 31.059, 23.334, 23.024, 25.131, 28.966, 23.061, 28.577]
+    results_table1['MR'] = [28.995, 25.942, 28.107, 26.881, 28.588, 19.971, 28.953, 29.171, 27.627, 29.412]
+    results_table1['DyNeRF'] = [29.170, 27.456, 29.083, 23.389, 28.599, 22.164, 29.161, 23.251, 27.625, 30.112]
+    results_table1['Ours'] = [29.317, 27.435, 29.051, 31.091, 28.613, 23.090, 29.332, 30.163, 28.057, 30.071]
     latex_for_table1(results_table1, 'Ours')
+
+    # A wo old
+    # 27.399, 23.541, 27.648, 34.684, 27.119, 31.215, 26.001, 30.010	
+    # B wo old
+    # 27.334 & 27.188 & 27.619 & 31.276 & 25.479 & 22.127 & 27.745 & 30.204
+    # 27.334 & 27.188 & 27.619 & 31.276 & 25.479 & 22.127 & 27.692 & 30.104
 
     print()
     print()
@@ -153,12 +159,61 @@ if __name__ == '__main__':
     '''
     
     results_table2 = dict()
+
+    # A
+    # # FT
+    # results_table2['FT'] = np.zeros((4,4))
+    # results_table2['FT'][0] = [-1, -1, -1, -1]
+    # results_table2['FT'][1] = [20.64543646, -1, -1, -1]
+    # results_table2['FT'][2] = [16.81103018, 21.54880912, -1, -1]
+    # results_table2['FT'][3] = [14.63479144, 20.2762135, 18.58333889, -1]
+    # results_table2['FT'][0][0] = results_table1['FT'][1]
+    # results_table2['FT'][1][1] = results_table1['FT'][3]
+    # results_table2['FT'][2][2] = results_table1['FT'][5]
+    # results_table2['FT'][3][3] = results_table1['FT'][7]
+    
+    # # MR
+    # results_table2['MR'] = -1 * np.ones((4,4))
+    # results_table2['MR'][0] = [-1, -1, -1, -1]
+    # results_table2['MR'][1] = [17.48201167, -1, -1, -1]
+    # results_table2['MR'][2] = [17.46424644, 17.63404493, -1, -1]
+    # results_table2['MR'][3] = [17.49236171, 17.8028726, 23.27553668, -1]
+    # results_table2['MR'][0][0] = results_table1['MR'][1]
+    # results_table2['MR'][1][1] = results_table1['MR'][3]
+    # results_table2['MR'][2][2] = results_table1['MR'][5]
+    # results_table2['MR'][3][3] = results_table1['MR'][7]
+
+    # # # DyNeRF
+    # # results_table2['DyNeRF'] = -1 * np.ones((4,4))
+    # # results_table2['DyNeRF'][0] = [-1, -1, -1, -1]
+    # # results_table2['DyNeRF'][1] = [20.92407136, -1, -1, -1]
+    # # results_table2['DyNeRF'][2] = [26.1020561, 19.02506679, -1, -1]
+    # # results_table2['DyNeRF'][3] = [26.16828318, 19.79502276, 30.59813558, -1]
+    # # results_table2['DyNeRF'][0][0] = results_table1['DyNeRF'][1]
+    # # results_table2['DyNeRF'][1][1] = results_table1['DyNeRF'][3]
+    # # results_table2['DyNeRF'][2][2] = results_table1['DyNeRF'][5]
+    # # results_table2['DyNeRF'][3][3] = results_table1['DyNeRF'][7]
+
+    # # Ours
+    # results_table2['Ours'] = -1 * np.ones((4,4))
+    # results_table2['Ours'][0] = [-1, -1, -1, -1]
+    # results_table2['Ours'][1] = [24.40780539, -1, -1, -1]
+    # results_table2['Ours'][2] = [24.05414591, 33.77792289, -1, -1]
+    # # results_table2['Ours'][3] = [23.71442592, 33.07247268, 24.94351561, -1]
+    # results_table2['Ours'][3] = [23.71442592, 33.07247268, 28.12931519, -1]
+    # results_table2['Ours'][0][0] = results_table1['Ours'][1]
+    # results_table2['Ours'][1][1] = results_table1['Ours'][3]
+    # results_table2['Ours'][2][2] = results_table1['Ours'][5]
+    # results_table2['Ours'][3][3] = results_table1['Ours'][7]
+
+    # B
     # FT
     results_table2['FT'] = np.zeros((4,4))
+    
     results_table2['FT'][0] = [-1, -1, -1, -1]
-    results_table2['FT'][1] = [20.64543646, -1, -1, -1]
-    results_table2['FT'][2] = [16.81103018, 21.54880912, -1, -1]
-    results_table2['FT'][3] = [14.63479144, 20.2762135, 18.58333889, -1]
+    results_table2['FT'][1] = [23.17809806, -1, -1, -1]
+    results_table2['FT'][2] = [19.54439688, 25.32269421, -1, -1]
+    results_table2['FT'][3] = [18.35521144, 24.32507094, 18.8268163, -1]
     results_table2['FT'][0][0] = results_table1['FT'][1]
     results_table2['FT'][1][1] = results_table1['FT'][3]
     results_table2['FT'][2][2] = results_table1['FT'][5]
@@ -167,9 +222,9 @@ if __name__ == '__main__':
     # MR
     results_table2['MR'] = -1 * np.ones((4,4))
     results_table2['MR'][0] = [-1, -1, -1, -1]
-    results_table2['MR'][1] = [17.48201167, -1, -1, -1]
-    results_table2['MR'][2] = [17.46424644, 17.63404493, -1, -1]
-    results_table2['MR'][3] = [17.49236171, 17.8028726, 23.27553668, -1]
+    results_table2['MR'][1] = [23.69385879, -1, -1, -1]
+    results_table2['MR'][2] = [23.71472661, 26.97677445, -1, -1]
+    results_table2['MR'][3] = [23.59763464, 26.92283348, 18.83363197, -1]
     results_table2['MR'][0][0] = results_table1['MR'][1]
     results_table2['MR'][1][1] = results_table1['MR'][3]
     results_table2['MR'][2][2] = results_table1['MR'][5]
@@ -178,9 +233,9 @@ if __name__ == '__main__':
     # # DyNeRF
     # results_table2['DyNeRF'] = -1 * np.ones((4,4))
     # results_table2['DyNeRF'][0] = [-1, -1, -1, -1]
-    # results_table2['DyNeRF'][1] = [20.92407136, -1, -1, -1]
-    # results_table2['DyNeRF'][2] = [26.1020561, 19.02506679, -1, -1]
-    # results_table2['DyNeRF'][3] = [26.16828318, 19.79502276, 30.59813558, -1]
+    # results_table2['DyNeRF'][1] = [-1, -1, -1, -1]
+    # results_table2['DyNeRF'][2] = [-1, -1, -1, -1]
+    # results_table2['DyNeRF'][3] = [-1, -1, -1, -1]
     # results_table2['DyNeRF'][0][0] = results_table1['DyNeRF'][1]
     # results_table2['DyNeRF'][1][1] = results_table1['DyNeRF'][3]
     # results_table2['DyNeRF'][2][2] = results_table1['DyNeRF'][5]
@@ -189,10 +244,9 @@ if __name__ == '__main__':
     # Ours
     results_table2['Ours'] = -1 * np.ones((4,4))
     results_table2['Ours'][0] = [-1, -1, -1, -1]
-    results_table2['Ours'][1] = [24.40780539, -1, -1, -1]
-    results_table2['Ours'][2] = [24.05414591, 33.77792289, -1, -1]
-    # results_table2['Ours'][3] = [23.71442592, 33.07247268, 24.94351561, -1]
-    results_table2['Ours'][3] = [23.71442592, 33.07247268, 28.12931519, -1]
+    results_table2['Ours'][1] = [26.77180272, -1, -1, -1]
+    results_table2['Ours'][2] = [26.25006047, 28.13322532, -1, -1]
+    results_table2['Ours'][3] = [25.9655335, 27.92497623, 22.2881861, -1]
     results_table2['Ours'][0][0] = results_table1['Ours'][1]
     results_table2['Ours'][1][1] = results_table1['Ours'][3]
     results_table2['Ours'][2][2] = results_table1['Ours'][5]

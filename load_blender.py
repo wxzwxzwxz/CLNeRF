@@ -255,7 +255,8 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
         poses = np.concatenate(all_poses, 0)
         all_paths = np.array(all_paths)
         
-        H, W = ori_H, ori_W # int(meta['img_h']), int(meta['img_w'])
+        H, W = int(meta['h']), int(meta['w'])#ori_H, ori_W change 0523wp
+        
         camera_angle_x = float(meta['camera_angle_x'])
         focal = .5 * W / np.tan(.5 * camera_angle_x)
         

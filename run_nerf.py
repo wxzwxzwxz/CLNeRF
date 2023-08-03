@@ -1273,6 +1273,7 @@ def config_parser():
     parser.add_argument("--use_teacher_nerf_second", action='store_true')
     parser.add_argument("--use_teacher_nerf_with_branch", action='store_true')
     parser.add_argument("--use_point_mask", action='store_true')
+    parser.add_argument("--use_only_kd", action='store_true')
     parser.add_argument("--datadir_teacher", type=str, default='./data/llff/fern', 
                         help='input data directory')
     parser.add_argument("--ft_teacher_path", type=str, default=None, 
@@ -1347,6 +1348,7 @@ def config_parser():
     parser.add_argument("--w_maskloss_reg_loss", type=float, default=1.0)
 
     parser.add_argument("--recenter_dir", type=str, default=None)
+    parser.add_argument("--bd_factor", type=float, default=0.75)
     
     return parser
 
@@ -1364,7 +1366,7 @@ def train():
         #                                                           recenter=True, bd_factor=.75,
         #                                                           spherify=args.spherify)
         images, poses, bds, render_poses, i_test, output_paths, images_mask = load_llff_data(args, args.datadir, args.factor,
-                                                                  recenter=True, bd_factor=.75,
+                                                                  recenter=True, bd_factor=args.bd_factor,
                                                                   spherify=args.spherify, recenter_dir=args.recenter_dir)
 
         hwf = poses[0,:3,-1]
@@ -1400,7 +1402,7 @@ def train():
             # input('hihihi')
             poses_teacher, i_test_teacher = load_llff_data(args, args.datadir, args.factor,
                                                                             load_imgs=False, 
-                                                                            recenter=True, bd_factor=.75,
+                                                                            recenter=True, bd_factor=args.bd_factor,
                                                                             spherify=args.spherify, recenter_dir=args.recenter_dir)
             if args.render_mask_only:
                 i_test_teacher = np.array([i for i in np.arange(int(poses_teacher.shape[0]))])
@@ -1587,6 +1589,8 @@ def train():
         render_kwargs_test_teacher.update(bds_dict)
         if args.use_predict_mask:
             render_kwargs_test_mask = None
+        elif args.use_only_kd:
+            render_kwargs_test_mask = None
         else:
             render_kwargs_test_mask = create_mask_nerf(args, ckpt_path=args.ft_mask_path)
             render_kwargs_test_mask.update(bds_dict)
@@ -1635,7 +1639,7 @@ def train():
 
             rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, args=args, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor, render_mask_only=args.render_mask_only, output_paths=output_paths, render_mask_threshold=args.render_mask_threshold)
             print('Done rendering', testsavedir)
-            # imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
+            imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
 
             return
 
@@ -1815,11 +1819,12 @@ def train():
                 loss = loss + loss_distillation0
         
         if args.use_predict_mask:
-            loss_mask = img2mse(extras['mask_map'], target_s_mask) # torch.mean(torch.abs((1 - extras['mask_map']))) # * args.w_mask_reg_loss
-            if 'rgb0' in extras:
-                loss_mask += img2mse(extras['mask_map0'], target_s_mask)
-            
-            loss = loss + args.w_mask_loss * loss_mask
+            if args.w_mask_loss > 0:
+                loss_mask = img2mse(extras['mask_map'], target_s_mask) # torch.mean(torch.abs((1 - extras['mask_map']))) # * args.w_mask_reg_loss
+                if 'rgb0' in extras:
+                    loss_mask += img2mse(extras['mask_map0'], target_s_mask)
+                
+                loss = loss + args.w_mask_loss * loss_mask
 
         if args.use_teacher_nerf:
             # randomly sample rays and genrate ground truth
@@ -1878,6 +1883,24 @@ def train():
                     pass
                     loss_teacher_second = extras_student['point_error_second'][0] + extras_student['point_error0_second'][0]
                     loss += loss_teacher_second * args.w_loss_teacher_second
+            elif args.use_only_kd:
+                rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                            verbose=i < 10, retraw=True,
+                                                            stop_pdf_sampling= i - start < 0,
+                                                            **render_kwargs_train)
+                                                        
+                with torch.no_grad():
+                    rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                            verbose=i < 10, retraw=True,
+                                                            stop_pdf_sampling= i - start < 0,
+                                                            **render_kwargs_test_teacher)
+
+                img_loss_teacher = img2mse(rgb_student, rgb_teacher)
+                loss += img_loss_teacher * args.w_loss_teacher
+
+                if 'rgb0' in extras:
+                    img_loss0_teacher = img2mse(extras_student['rgb0'], rgb_teacher)
+                    loss += img_loss0_teacher * args.w_loss_teacher
             else:
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
