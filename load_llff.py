@@ -65,7 +65,7 @@ def _load_data(args, basedir, factor=None, width=None, height=None, load_imgs=Tr
     
     img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
             if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
-
+    
     sh = imageio.imread(img0).shape
     
     sfx = ''
@@ -274,6 +274,8 @@ def load_llff_data(args, basedir,
     
     # Rescale if bd_factor is provided
     sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
+    print(sc)
+    
     poses[:,:3,3] *= sc
     bds *= sc
 

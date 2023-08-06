@@ -1290,6 +1290,7 @@ def config_parser():
     # parser.add_argument("--transforms_train", type=str, default=None)
     parser.add_argument('--transforms_train', nargs='+', default=None)
     parser.add_argument('--transforms_train_ratio', nargs='+', default=None)
+    parser.add_argument('--transforms_train_teacher', nargs='+', default='transforms_train.json')
     parser.add_argument("--transforms_val", type=str, default=None)
     # parser.add_argument("--transforms_test", type=str, default=None)
     parser.add_argument('--transforms_test', nargs='+', default=None)
@@ -1454,7 +1455,7 @@ def train():
             
         if args.use_teacher_nerf:
             poses_teacher, render_poses_teacher, _, i_split_teacher, _, fts_train, fts_test = load_blender_data(args, args.datadir_teacher, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W, ext=args.ext,
-                                                                                            transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
+                                                                                            transforms_train=args.transforms_train_teacher, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
                                                                                             trainskip=args.trainskip_teacher, spherical_radius=args.spherical_radius,
                                                                                             transforms_train_ratio=args.transforms_train_ratio,
                                                                                             transforms_test_ratio=args.transforms_test_ratio)
@@ -1476,7 +1477,7 @@ def train():
         if args.use_teacher_nerf_second:
             pass
             poses_teacher_second, render_poses_teacher_second, _, i_split_teacher_second, _, fts_train, fts_test, _ = load_blender_data(args, args.datadir_teacher_second, args.half_res, args.testskip, load_imgs=False, ori_H=ori_H, ori_W=ori_W,
-                                                                                                                transforms_train=args.transforms_train, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
+                                                                                                                transforms_train=args.transforms_train_teacher, transforms_val=args.transforms_val, transforms_test=args.transforms_test,
                                                                                                                 trainskip=args.trainskip_teacher, spherical_radius=args.spherical_radius,
                                                                                                                 transforms_train_ratio=args.transforms_train_ratio,
                                                                                                                 transforms_test_ratio=args.transforms_test_ratio)
