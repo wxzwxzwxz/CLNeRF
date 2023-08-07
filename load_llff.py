@@ -61,7 +61,7 @@ def _load_data(args, basedir, factor=None, width=None, height=None, load_imgs=Tr
     
     poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
     poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])
-    bds = poses_arr[:, -2:].transpose([1,0])
+    bds = poses_arr[:, -2:].transpose([1,0]) #(419,2) farest cloest
     
     img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
             if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]

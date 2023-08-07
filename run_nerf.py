@@ -111,6 +111,7 @@ def batchify_rays(rays_flat, chunk=1024*32, use_point_mask=False,
 
 def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
                   near=0., far=1.,
+                  near_updated=None, far_updated=None,
                   use_viewdirs=False, c2w_staticcam=None,
                   use_point_mask=False,
                   use_predict_mask=False,
@@ -164,9 +165,14 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
     # Create ray batch
     rays_o = torch.reshape(rays_o, [-1,3]).float()
     rays_d = torch.reshape(rays_d, [-1,3]).float()
+    
+    if near_updated:
+        near_updated, far_updated = near_updated * torch.ones_like(rays_d[...,:1]), far_updated * torch.ones_like(rays_d[...,:1])
+        rays = torch.cat([rays_o, rays_d, near_updated, far_updated], -1)
+    else:
+        near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
+        rays = torch.cat([rays_o, rays_d, near, far], -1)
 
-    near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
-    rays = torch.cat([rays_o, rays_d, near, far], -1)
     if use_viewdirs:
         rays = torch.cat([rays, viewdirs], -1)
 
@@ -1267,6 +1273,8 @@ def config_parser():
     # experiments
     parser.add_argument("--near", type=float, default=None)
     parser.add_argument("--far", type=float, default=None)
+    parser.add_argument("--near_teacher", type=float, default=None)
+    parser.add_argument("--far_teacher", type=float, default=None)
     parser.add_argument("--N_iters", type=int, default=200000)
     parser.add_argument("--scene_scale", type=float, default=None)
     parser.add_argument("--use_teacher_nerf", action='store_true')
@@ -1837,12 +1845,14 @@ def train():
                                                             verbose=i < 10, retraw=True,
                                                             use_predict_mask=args.use_predict_mask,
                                                             stop_pdf_sampling= i - start < 0,
+                                                            near_updated=args.near_teacher, far_updated=args.far_teacher,
                                                             **render_kwargs_train)
                                                         
                 with torch.no_grad():
                     rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
                                                             stop_pdf_sampling= i - start < 0,
+                                                            near_updated=args.near_teacher, far_updated=args.far_teacher,
                                                             **render_kwargs_test_teacher)
 
                     # rgb_gt = (1-rgb_mask) * rgb_teacher
@@ -1867,6 +1877,7 @@ def train():
                                                         render_kwargs_test_teacher_second=render_kwargs_test_teacher_second,
                                                         render_kwargs_test_mask=render_kwargs_test_mask,
                                                         stop_pdf_sampling= i - start < 0,
+                                                        near_updated=args.near_teacher, far_updated=args.far_teacher,
                                                         **render_kwargs_train)
                 # loss_teacher = extras_student['point_error'][0] + extras_student['point_error0'][0]
                 # loss += loss_teacher * args.w_loss_teacher
@@ -1874,6 +1885,7 @@ def train():
                     rgb_mask, disp_mask, acc_mask, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
                                                             stop_pdf_sampling= i - start < 0,
+                                                            near_updated=args.near_teacher, far_updated=args.far_teacher,
                                                             **render_kwargs_test_mask)
                 rgb_mask = torch.mean(rgb_mask, -1).unsqueeze(-1)
                 loss_teacher = torch.sum(extras_student['point_error'][0] * rgb_mask) / (torch.sum(rgb_mask) + 1e-6)
@@ -1888,12 +1900,14 @@ def train():
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
                                                             stop_pdf_sampling= i - start < 0,
+                                                            near_updated=args.near_teacher, far_updated=args.far_teacher,
                                                             **render_kwargs_train)
                                                         
                 with torch.no_grad():
                     rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
                                                             stop_pdf_sampling= i - start < 0,
+                                                            near_updated=args.near_teacher, far_updated=args.far_teacher,
                                                             **render_kwargs_test_teacher)
 
                 img_loss_teacher = img2mse(rgb_student, rgb_teacher)
@@ -1906,16 +1920,19 @@ def train():
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
                                                             stop_pdf_sampling= i - start < 0,
+                                                            near_updated=args.near_teacher, far_updated=args.far_teacher,
                                                             **render_kwargs_train)
                                                         
                 with torch.no_grad():
                     rgb_teacher, disp_teacher, acc_teacher, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
                                                             stop_pdf_sampling= i - start < 0,
+                                                            near_updated=args.near_teacher, far_updated=args.far_teacher,
                                                             **render_kwargs_test_teacher)
                     rgb_mask, disp_mask, acc_mask, _ = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,
                                                             stop_pdf_sampling= i - start < 0,
+                                                            near_updated=args.near_teacher, far_updated=args.far_teacher,
                                                             **render_kwargs_test_mask)
                     # rgb_gt = (1-rgb_mask) * rgb_teacher
 
