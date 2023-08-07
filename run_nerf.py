@@ -222,11 +222,11 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
 
     t = time.time()
     psnr = 0
+    
     if args.use_lpips:
         lpips_overall = 0
         import lpips
         loss_fn_alex = lpips.LPIPS(net='alex') # closer to "traditional" perceptual loss, when used for optimization
-
 
     for i, c2w in enumerate(tqdm(render_poses)):
     # for i, c2w in enumerate((render_poses)):
@@ -253,7 +253,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
             # psnr += mse2psnr_np(mse)
             cur_psnr = mse2psnr_np(mse)
             psnr += cur_psnr
-
+            
             if args.use_lpips:
                 cur_lpips = compute_lpips(loss_fn_alex, rgb[:, :, ::-1], gt_img[:, :, ::-1])
                 lpips_overall += cur_lpips
@@ -1661,10 +1661,10 @@ def train():
                     else:
                         testsavedir = testsavedir + '_' + args.transforms_test.split('.')[0].split('_')[-1]
 
-            # os.makedirs(testsavedir, exist_ok=True)
-            # print('test poses shape', render_poses.shape)
+            os.makedirs(testsavedir, exist_ok=True)
+            print('test poses shape', render_poses.shape)
 
-            # rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, args=args, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor, render_mask_only=args.render_mask_only, output_paths=output_paths, render_mask_threshold=args.render_mask_threshold)
+            rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, args=args, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor, render_mask_only=args.render_mask_only, output_paths=output_paths, render_mask_threshold=args.render_mask_threshold)
             # print('Done rendering', testsavedir)
             # imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
 
