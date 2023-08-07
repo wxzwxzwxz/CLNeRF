@@ -315,12 +315,12 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
             f.write(str(psnr)+'\n')
     
     if args.use_lpips:
-        lpips = lpips / len(render_poses)
-        print(lpips)
+        lpips_overall = lpips_overall / len(render_poses)
+        print(lpips_overall)
         
         if savedir is not None:
             with open(os.path.join(savedir, 'lpips.txt'), 'w') as f:
-                f.write(str(lpips)+'\n')
+                f.write(str(lpips_overall)+'\n')
     
     rgbs = np.stack(rgbs, 0)
     disps = np.stack(disps, 0)
