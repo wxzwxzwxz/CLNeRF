@@ -222,6 +222,12 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
 
     t = time.time()
     psnr = 0
+    if args.use_lpips:
+        lpips = 0
+        import lpips
+        loss_fn_alex = lpips.LPIPS(net='alex') # closer to "traditional" perceptual loss, when used for optimization
+
+
     for i, c2w in enumerate(tqdm(render_poses)):
     # for i, c2w in enumerate((render_poses)):
         # print(i, time.time() - t)
@@ -247,6 +253,9 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
             # psnr += mse2psnr_np(mse)
             cur_psnr = mse2psnr_np(mse)
             psnr += cur_psnr
+
+            if args.use_lpips:
+                lpips += compute_lpips(loss_fn_alex, rgb[:, :, ::-1], gt_img[:, :, ::-1])
 
             if render_mask_only:
                 rgb = error_mask
@@ -303,6 +312,14 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
     if savedir is not None:
         with open(os.path.join(savedir, 'psnr.txt'), 'w') as f:
             f.write(str(psnr)+'\n')
+    
+    if args.use_lpips:
+        lpips = lpips / len(render_poses)
+        print(lpips)
+        
+        if savedir is not None:
+            with open(os.path.join(savedir, 'lpips.txt'), 'w') as f:
+                f.write(str(lpips)+'\n')
     
     rgbs = np.stack(rgbs, 0)
     disps = np.stack(disps, 0)
@@ -1355,6 +1372,9 @@ def config_parser():
 
     parser.add_argument("--recenter_dir", type=str, default=None)
     parser.add_argument("--bd_factor", type=float, default=0.75) 
+
+    # For evaluation
+    parser.add_argument("--use_lpips", action='store_true')
     
     return parser
 

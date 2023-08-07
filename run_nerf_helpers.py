@@ -9,6 +9,9 @@ import loralib as lora
 from adapter import bottle_neck_adapter
 from expert import *
 
+# for LPIPS
+import lpips
+
 # Misc
 img2mse = lambda x, y : torch.mean((x - y) ** 2)
 img2mse_withmask = lambda x, y, mask : torch.sum((x * mask - y * mask) ** 2) / (torch.sum(mask)+1e-6)
@@ -18,6 +21,16 @@ to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
 
 img2mse_np = lambda x, y : np.mean((x - y) ** 2)
 mse2psnr_np = lambda x : -10. * np.log(x) / np.log(np.array([10.]))
+
+def compute_lpips(loss_fn, img0, img1):
+    # Load images
+    img0 = lpips.im2tensor(img0).cuda() # RGB image from [-1,1]
+    img1 = lpips.im2tensor(img1).cuda()
+
+    # Compute distance
+    dist01 = loss_fn.forward(img0, img1).cpu().numpy()
+
+    return dist01
 
 # Positional encoding (section 5.1)
 class Embedder:
