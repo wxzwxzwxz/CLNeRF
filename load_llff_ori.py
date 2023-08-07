@@ -1,96 +1,70 @@
 import numpy as np
 import os, imageio
-import random
+
 
 ########## Slightly modified version of LLFF data loading code 
 ##########  see https://github.com/Fyusion/LLFF for original
 
-def _minify(basedir_list, factors=[], resolutions=[]):
-    for basedir in basedir_list:
-        needtoload = False
-        # import pdb; pdb.set_trace()
-        for r in factors:
-            imgdir = os.path.join(basedir, 'images_{}'.format(r))
-            if not os.path.exists(imgdir):
-                needtoload = True
-        for r in resolutions:
-            imgdir = os.path.join(basedir, 'images_{}x{}'.format(r[1], r[0]))
-            if not os.path.exists(imgdir):
-                needtoload = True
-        if not needtoload:
-            return
-        
-        from shutil import copy
-        from subprocess import check_output
-        
-        imgdir = os.path.join(basedir, 'images')
-        imgs = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir))]
-        imgs = [f for f in imgs if any([f.endswith(ex) for ex in ['JPG', 'jpg', 'png', 'jpeg', 'PNG']])]
-        imgdir_orig = imgdir
-        
-        wd = os.getcwd()
+def _minify(basedir, factors=[], resolutions=[]):
+    needtoload = False
+    # import pdb; pdb.set_trace()
+    for r in factors:
+        imgdir = os.path.join(basedir, 'images_{}'.format(r))
+        if not os.path.exists(imgdir):
+            needtoload = True
+    for r in resolutions:
+        imgdir = os.path.join(basedir, 'images_{}x{}'.format(r[1], r[0]))
+        if not os.path.exists(imgdir):
+            needtoload = True
+    if not needtoload:
+        return
+    
+    from shutil import copy
+    from subprocess import check_output
+    
+    imgdir = os.path.join(basedir, 'images')
+    imgs = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir))]
+    imgs = [f for f in imgs if any([f.endswith(ex) for ex in ['JPG', 'jpg', 'png', 'jpeg', 'PNG']])]
+    imgdir_orig = imgdir
+    
+    wd = os.getcwd()
 
-        for r in factors + resolutions:
-            if isinstance(r, int):
-                name = 'images_{}'.format(r)
-                resizearg = '{}%'.format(100./r)
-            else:
-                name = 'images_{}x{}'.format(r[1], r[0])
-                resizearg = '{}x{}'.format(r[1], r[0])
-            imgdir = os.path.join(basedir, name)
-            if os.path.exists(imgdir):
-                continue
-                
-            print('Minifying', r, basedir)
+    for r in factors + resolutions:
+        if isinstance(r, int):
+            name = 'images_{}'.format(r)
+            resizearg = '{}%'.format(100./r)
+        else:
+            name = 'images_{}x{}'.format(r[1], r[0])
+            resizearg = '{}x{}'.format(r[1], r[0])
+        imgdir = os.path.join(basedir, name)
+        if os.path.exists(imgdir):
+            continue
             
-            os.makedirs(imgdir)
-            check_output('cp {}/* {}'.format(imgdir_orig, imgdir), shell=True)
-            
-            ext = imgs[0].split('.')[-1]
-            args = ' '.join(['mogrify', '-resize', resizearg, '-format', 'png', '*.{}'.format(ext)])
-            print(args)
-            os.chdir(imgdir)
-            check_output(args, shell=True)
-            os.chdir(wd)
-            
-            if ext != 'png':
-                check_output('rm {}/*.{}'.format(imgdir, ext), shell=True)
-                print('Removed duplicates')
-            print('Done')
+        print('Minifying', r, basedir)
+        
+        os.makedirs(imgdir)
+        check_output('cp {}/* {}'.format(imgdir_orig, imgdir), shell=True)
+        
+        ext = imgs[0].split('.')[-1]
+        args = ' '.join(['mogrify', '-resize', resizearg, '-format', 'png', '*.{}'.format(ext)])
+        print(args)
+        os.chdir(imgdir)
+        check_output(args, shell=True)
+        os.chdir(wd)
+        
+        if ext != 'png':
+            check_output('rm {}/*.{}'.format(imgdir, ext), shell=True)
+            print('Removed duplicates')
+        print('Done')
 
-def _load_data(args, basedir, datadir_ratio, factor=None, width=None, height=None, load_imgs=True, is_recenter=False):
-    # import pdb
-    # pdb.set_trace()
-    sample_idx_list=[] # store the sample idx for filtter out the imgs
-    if basedir is not None and isinstance(basedir, list):
-        _poses_arr = []
-        for idx in range(len(basedir)):
-            _poses = np.load(os.path.join(basedir[idx], 'poses_bounds.npy'))
-            if datadir_ratio is not None and int(datadir_ratio[idx]) > 0:
-                _idxs_rows = np.random.choice(_poses.shape[0], size = int(datadir_ratio[idx]), replace=False)
-                _poses = _poses[_idxs_rows][:, :]
-                sample_idx_list.append(_idxs_rows.tolist())
-                _poses_arr.append(_poses)
-            else:
-                sample_idx_list.append(list(range(_poses.shape[0])))
-                _poses_arr.append(_poses)
-
-        poses_arr = np.concatenate(_poses_arr, axis=0)
-        print('combine poses_arr.shape:', poses_arr.shape)
-        # a list transforms_train_ratio
-    else:
-        # no combine situation
-        poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
+def _load_data(args, basedir, factor=None, width=None, height=None, load_imgs=True, is_recenter=False):
+    
+    poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
     poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])
-    bds = poses_arr[:, -2:].transpose([1,0])
+    bds = poses_arr[:, -2:].transpose([1,0]) #(419,2) farest cloest
     
-    if basedir is not None and isinstance(basedir, list):
-        img0 = [os.path.join(basedir[0], 'images', f) for f in sorted(os.listdir(os.path.join(basedir[0], 'images'))) \
-                if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
-    
-    else:
-        img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
-                if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
+    img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
+            if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
     
     sh = imageio.imread(img0).shape
     
@@ -98,7 +72,7 @@ def _load_data(args, basedir, datadir_ratio, factor=None, width=None, height=Non
     
     if factor is not None:
         sfx = '_{}'.format(factor)
-        _minify(basedir, factors=[factor]) # to be fix to handle the basedir is a list situation
+        _minify(basedir, factors=[factor])
         factor = factor
     elif height is not None:
         factor = sh[0] / float(height)
@@ -113,26 +87,12 @@ def _load_data(args, basedir, datadir_ratio, factor=None, width=None, height=Non
     else:
         factor = 1
     
-    if basedir is not None and isinstance(basedir, list):
-        imgfiles = []
-        for idx_i,p in enumerate(basedir):
-            imgdir = os.path.join(p, 'images' + sfx)
-            if not os.path.exists(imgdir):
-                print( imgdir, 'does not exist, returning' )
-                return
-            _imgfiles = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir)) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
-            _res_list = [_imgfiles[i] for i in sample_idx_list[idx_i]]
-            imgfiles.extend(_res_list)
-
-            
-    else:
-
-        imgdir = os.path.join(basedir, 'images' + sfx)
-        if not os.path.exists(imgdir):
-            print( imgdir, 'does not exist, returning' )
-            return
-        
-        imgfiles = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir)) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
+    imgdir = os.path.join(basedir, 'images' + sfx)
+    if not os.path.exists(imgdir):
+        print( imgdir, 'does not exist, returning' )
+        return
+    
+    imgfiles = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir)) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
     
     all_path=[l.split('/')[-1] for l in imgfiles]
     #print(all_path)
@@ -289,21 +249,21 @@ def spherify_poses(poses, bds):
     return poses_reset, new_poses, bds
     
 
-def load_llff_data(args, basedir, datadir_ratio,
+def load_llff_data(args, basedir, 
                     factor=8, 
                     load_imgs=True,
                     recenter=True, bd_factor=.75, spherify=False, path_zflat=False, recenter_dir=None):
     
     #print(basedir)
     if load_imgs:
-        poses, bds, imgs, imgs_mask, all_path = _load_data(args, basedir, datadir_ratio, factor=factor) # factor=8 downsamples original imgs by 8x
+        poses, bds, imgs, imgs_mask, all_path = _load_data(args, basedir, factor=factor) # factor=8 downsamples original imgs by 8x
         imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
         images = imgs
         images = images.astype(np.float32)
         if imgs_mask is not None:
             imgs_mask = np.moveaxis(imgs_mask, -1, 0).astype(np.float32)
     else:
-        poses, bds = _load_data(args, basedir, datadir_ratio, factor=factor, load_imgs=load_imgs)
+        poses, bds = _load_data(args, basedir, factor=factor, load_imgs=load_imgs)
 
     print('Loaded', basedir, bds.min(), bds.max())
 
@@ -320,9 +280,7 @@ def load_llff_data(args, basedir, datadir_ratio,
     bds *= sc
 
     if recenter_dir is not None:
-        if not isinstance(recenter_dir, list):
-            recenter_dir = [recenter_dir]
-        poses_r, bds_r, _, _, _ = _load_data(args, recenter_dir, datadir_ratio, factor=factor, is_recenter=True) # factor=8 downsamples original imgs by 8x
+        poses_r, bds_r, _, _, _ = _load_data(args, recenter_dir, factor=factor, is_recenter=True) # factor=8 downsamples original imgs by 8x
         
         # Correct rotation matrix ordering and move variable dim to axis 0
         poses_r = np.concatenate([poses_r[:, 1:2, :], -poses_r[:, 0:1, :], poses_r[:, 2:, :]], 1)
