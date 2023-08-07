@@ -40,6 +40,13 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
                     trainskip=1, spherical_radius=4.0,
                     transforms_train=None, transforms_val=None, transforms_test=None, 
                     transforms_train_ratio=None, transforms_test_ratio=None):
+    
+    if isinstance(basedir, list):
+        if len(basedir) > 1:
+            raise NotImplementedError
+        else:
+            basedir = basedir[0]
+
     splits = ['train', 'val', 'test']
     metas = {}
 

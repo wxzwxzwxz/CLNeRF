@@ -28,7 +28,7 @@ def compute_lpips(loss_fn, img0, img1):
     img1 = lpips.im2tensor(img1).cuda()
 
     # Compute distance
-    dist01 = loss_fn.forward(img0, img1).cpu().numpy()
+    dist01 = loss_fn.forward(img0, img1)[0][0][0][0].cpu().numpy()
 
     return dist01
 
