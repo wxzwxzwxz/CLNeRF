@@ -223,7 +223,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
     t = time.time()
     psnr = 0
     if args.use_lpips:
-        lpips = 0
+        lpips_overall = 0
         import lpips
         loss_fn_alex = lpips.LPIPS(net='alex') # closer to "traditional" perceptual loss, when used for optimization
 
@@ -255,7 +255,8 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
             psnr += cur_psnr
 
             if args.use_lpips:
-                lpips += compute_lpips(loss_fn_alex, rgb[:, :, ::-1], gt_img[:, :, ::-1])
+                cur_lpips = compute_lpips(loss_fn_alex, rgb[:, :, ::-1], gt_img[:, :, ::-1])
+                lpips_overall += cur_lpips
 
             if render_mask_only:
                 rgb = error_mask
