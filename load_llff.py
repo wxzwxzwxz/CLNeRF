@@ -22,7 +22,6 @@ def _minify(basedir_list, factors=[], resolutions=[]):
         
         from shutil import copy
         from subprocess import check_output
-        
         imgdir = os.path.join(basedir, 'images')
         imgs = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir))]
         imgs = [f for f in imgs if any([f.endswith(ex) for ex in ['JPG', 'jpg', 'png', 'jpeg', 'PNG']])]
@@ -95,7 +94,6 @@ def _load_data(args, basedir, datadir_ratio, factor=None, width=None, height=Non
     sh = imageio.imread(img0).shape
     
     sfx = ''
-    
     if factor is not None:
         sfx = '_{}'.format(factor)
         _minify(basedir, factors=[factor]) # to be fix to handle the basedir is a list situation

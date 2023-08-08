@@ -1297,8 +1297,9 @@ def config_parser():
     parser.add_argument("--use_teacher_nerf_with_branch", action='store_true')
     parser.add_argument("--use_point_mask", action='store_true')
     parser.add_argument("--use_only_kd", action='store_true')
-    parser.add_argument("--datadir_teacher", type=str, default='./data/llff/fern', 
-                        help='input data directory')
+    # parser.add_argument("--datadir_teacher", type=str, default='./data/llff/fern', 
+    #                     help='input data directory')
+    parser.add_argument('--datadir_teacher', nargs='+', default=None)
     parser.add_argument("--ft_teacher_path", type=str, default=None, 
                         help='specific weights npy file to reload for teacher network')
     parser.add_argument("--ft_mask_path", type=str, default=None, 
@@ -1436,10 +1437,31 @@ def train():
         if args.use_teacher_nerf:
             # poses_teacher, render_poses_teacher, _, i_split_teacher, _, fts_train, fts_test
             # input('hihihi')
-            poses_teacher, i_test_teacher = load_llff_data(args, args.datadir, args.datadir_ratio, args.factor,
+            poses_teacher, i_test_teacher = load_llff_data(args, args.datadir_teacher, args.datadir_ratio, args.factor,
                                                                             load_imgs=False, 
                                                                             recenter=True, bd_factor=args.bd_factor_teacher,
                                                                             spherify=args.spherify, recenter_dir=args.recenter_dir)
+            
+            # if args.trainskip > 1:
+            #     i_train = np.arange(images.shape[0])[::args.trainskip]            
+            #     i_test = np.array([i for i in np.arange(int(images.shape[0])) if
+            #                     (i not in i_train)])
+            #     i_val = i_test
+            # else:
+            #     if args.render_mask_only:
+            #         i_test = np.array([i for i in np.arange(int(images.shape[0]))])
+            #     else:
+            #         if not isinstance(i_test, list):
+            #             i_test = [i_test]
+
+            #         if args.llffhold > 0:
+            #             print('Auto LLFF holdout,', args.llffhold)
+            #             i_test = np.arange(images.shape[0])[::args.llffhold]
+
+            #     i_val = i_test
+            #     i_train = np.array([i for i in np.arange(int(images.shape[0])) if
+            #                     (i not in i_test and i not in i_val)])
+            
             if args.render_mask_only:
                 i_test_teacher = np.array([i for i in np.arange(int(poses_teacher.shape[0]))])
             else:
@@ -1452,7 +1474,7 @@ def train():
 
             i_val_teacher = i_test_teacher
             i_train_teacher = np.array([i for i in np.arange(int(poses_teacher.shape[0])) if
-                            (i not in i_test_teacher and i not in i_val)])
+                            (i not in i_test_teacher and i not in i_val_teacher)])
 
     elif args.dataset_type == 'blender':
         if args.render_wo_images:
