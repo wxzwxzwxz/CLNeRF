@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from run_nerf_helpers import *
 import nerf_teacher
 
-from load_llff import load_llff_data
+from load_llff_wp import load_llff_data
 from load_deepvoxels import load_dv_data
 from load_blender import load_blender_data
 from load_LINEMOD import load_LINEMOD_data
@@ -226,7 +226,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
     if args.use_lpips:
         lpips_overall = 0
         import lpips
-        loss_fn_alex = lpips.LPIPS(net='alex').cuda() # closer to "traditional" perceptual loss, when used for optimization
+        loss_fn_alex = lpips.LPIPS(net='alex') # closer to "traditional" perceptual loss, when used for optimization
 
     for i, c2w in enumerate(tqdm(render_poses)):
     # for i, c2w in enumerate((render_poses)):
@@ -255,7 +255,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
             psnr += cur_psnr
             
             if args.use_lpips:
-                cur_lpips = compute_lpips(loss_fn_alex, rgb, gt_img)
+                cur_lpips = compute_lpips(loss_fn_alex, rgb[:, :, ::-1], gt_img[:, :, ::-1])
                 lpips_overall += cur_lpips
 
             if render_mask_only:
@@ -1372,9 +1372,10 @@ def config_parser():
     parser.add_argument("--w_maskloss_reg_loss", type=float, default=1.0)
 
     parser.add_argument("--recenter_dir", type=str, default=None)
-    parser.add_argument("--bd_factor", type=float, default=0.75) 
-    parser.add_argument("--bd_factor_recenter", type=float, default=0.75) 
-    parser.add_argument("--bd_factor_teacher", type=float, default=0.75) 
+
+    # double factor
+    parser.add_argument("--bd_factor", nargs='+', default=None) 
+    parser.add_argument("--bd_factor_recenter", nargs='+', default=None) 
 
     # For evaluation
     parser.add_argument("--use_lpips", action='store_true')
@@ -1394,10 +1395,17 @@ def train():
         # images, poses, bds, render_poses, i_test = load_llff_data(args.datadir, args.factor,
         #                                                           recenter=True, bd_factor=.75,
         #                                                           spherify=args.spherify)
+        if len(args.bd_factor) == 1:
+            bdf = float(args.bd_factor[0])
+        else:
+            bdf = args.bd_factor
         images, poses, bds, render_poses, i_test, output_paths, images_mask = load_llff_data(args, args.datadir, args.datadir_ratio, args.factor,
-                                                                  recenter=True, bd_factor=args.bd_factor,
+                                                                  recenter=True, bd_factor=bdf,
                                                                   spherify=args.spherify, recenter_dir=args.recenter_dir)
-
+        # print('before move poses.shape',poses.shape)
+        # if isinstance(bdf, list):
+        #     poses = np.moveaxis(poses, -1, 0)
+        # print('after move poses.shape',poses.shape)
         hwf = poses[0,:3,-1]
         poses = poses[:,:3,:4]
         print('Loaded llff', images.shape, render_poses.shape, hwf, args.datadir)
@@ -1436,10 +1444,16 @@ def train():
         if args.use_teacher_nerf:
             # poses_teacher, render_poses_teacher, _, i_split_teacher, _, fts_train, fts_test
             # input('hihihi')
-            poses_teacher, i_test_teacher = load_llff_data(args, args.datadir, args.datadir_ratio, args.factor,
+            if len(args.bd_factor) == 1:
+                bdf = float(args.bd_factor[0])
+            else:
+                bdf = args.bd_factor
+            poses_teacher, i_test_teacher = load_llff_data(args, args.datadir, args.factor,
                                                                             load_imgs=False, 
-                                                                            recenter=True, bd_factor=args.bd_factor_teacher,
+                                                                            recenter=True, bd_factor=bdf,
                                                                             spherify=args.spherify, recenter_dir=args.recenter_dir)
+            # if isinstance(bdf, list):
+            #     poses_teacher = np.moveaxis(poses_teacher, -1, 0)
             if args.render_mask_only:
                 i_test_teacher = np.array([i for i in np.arange(int(poses_teacher.shape[0]))])
             else:

@@ -58,7 +58,7 @@ def _minify(basedir_list, factors=[], resolutions=[]):
                 print('Removed duplicates')
             print('Done')
 
-def _load_data(args, basedir, datadir_ratio, factor=None, width=None, height=None, load_imgs=True, is_recenter=False):
+def _load_data(args, basedir, datadir_ratio, bd_factor, factor=None, width=None, height=None, load_imgs=True, is_recenter=False):
     # import pdb
     # pdb.set_trace()
     sample_idx_list=[] # store the sample idx for filtter out the imgs
@@ -66,7 +66,7 @@ def _load_data(args, basedir, datadir_ratio, factor=None, width=None, height=Non
         _poses_arr = []
         for idx in range(len(basedir)):
             _poses = np.load(os.path.join(basedir[idx], 'poses_bounds.npy'))
-            if datadir_ratio is not None and isinstance(datadir_ratio, list) and int(datadir_ratio[idx]) > 0:
+            if datadir_ratio is not None and int(datadir_ratio[idx]) > 0:
                 _idxs_rows = np.random.choice(_poses.shape[0], size = int(datadir_ratio[idx]), replace=False)
                 _poses = _poses[_idxs_rows][:, :]
                 sample_idx_list.append(_idxs_rows.tolist())
@@ -74,15 +74,26 @@ def _load_data(args, basedir, datadir_ratio, factor=None, width=None, height=Non
             else:
                 sample_idx_list.append(list(range(_poses.shape[0])))
                 _poses_arr.append(_poses)
-                
-        poses_arr = np.concatenate(_poses_arr, axis=0)
-        print('combine poses_arr.shape:', poses_arr.shape)
+        if isinstance(bd_factor, list):
+            poses_arr = _poses_arr.copy()
+            print('late combine')
+        else:
+            poses_arr = np.concatenate(_poses_arr, axis=0)
+            print('combine poses_arr.shape:', poses_arr.shape)
         # a list transforms_train_ratio
     else:
         # no combine situation
         poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
-    poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])
-    bds = poses_arr[:, -2:].transpose([1,0])
+    
+    if isinstance(poses_arr, list):
+        poses = []
+        bds = []
+        for item in poses_arr:
+            poses.append(item[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0]))
+            bds.append(item[:, -2:].transpose([1,0]))
+    else:
+        poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])
+        bds = poses_arr[:, -2:].transpose([1,0])
     
     if basedir is not None and isinstance(basedir, list):
         img0 = [os.path.join(basedir[0], 'images', f) for f in sorted(os.listdir(os.path.join(basedir[0], 'images'))) \
@@ -136,13 +147,28 @@ def _load_data(args, basedir, datadir_ratio, factor=None, width=None, height=Non
     
     all_path=[l.split('/')[-1] for l in imgfiles]
     #print(all_path)
-    if poses.shape[-1] != len(imgfiles):
-        print( 'Mismatch between imgs {} and poses {} !!!!'.format(len(imgfiles), poses.shape[-1]) )
-        return
+
+    if isinstance(poses, list):
+        sum = 0
+        for line in poses:
+            sum += line.shape[-1]
+        if sum != len(imgfiles):
+            print( 'Mismatch between imgs {} and poses {} !!!!'.format(len(imgfiles), poses.shape[-1]) )
+            return
+    
+    else:
+        if poses.shape[-1] != len(imgfiles):
+            print( 'Mismatch between imgs {} and poses {} !!!!'.format(len(imgfiles), poses.shape[-1]) )
+            return
     
     sh = imageio.imread(imgfiles[0]).shape
-    poses[:2, 4, :] = np.array(sh[:2]).reshape([2, 1])
-    poses[2, 4, :] = poses[2, 4, :] * 1./factor
+    if isinstance(poses, list):
+        for po in poses:
+            po[:2, 4, :] = np.array(sh[:2]).reshape([2, 1])
+            po[2, 4, :] = po[2, 4, :] * 1./factor
+    else:
+        poses[:2, 4, :] = np.array(sh[:2]).reshape([2, 1])
+        poses[2, 4, :] = poses[2, 4, :] * 1./factor
     
     if not load_imgs:
         return poses, bds
@@ -163,8 +189,17 @@ def _load_data(args, basedir, datadir_ratio, factor=None, width=None, height=Non
         imgs_mask = np.stack(imgs_mask, -1)
     else:
         imgs_mask = None
-
-    print('Loaded image data', imgs.shape, poses[:,-1,0])
+    if isinstance(poses, list):
+        _sum = 0
+        for p in poses:
+            _sum += p[:,-1,0]
+        print('Loaded image data', imgs.shape, _sum)
+    else:
+        print('Loaded image data', imgs.shape, poses[:,-1,0])
+    # if isinstance(poses, list):
+    #     print('load data poses shape:',poses[0].shape, poses[1].shape)
+    # else:
+    #     print('load data poses shape:',poses.shape)
     return poses, bds, imgs, imgs_mask, all_path
 
 def normalize(x):
@@ -296,42 +331,100 @@ def load_llff_data(args, basedir, datadir_ratio,
     
     #print(basedir)
     if load_imgs:
-        poses, bds, imgs, imgs_mask, all_path = _load_data(args, basedir, datadir_ratio, factor=factor) # factor=8 downsamples original imgs by 8x
+        poses, bds, imgs, imgs_mask, all_path = _load_data(args, basedir, datadir_ratio, bd_factor, factor=factor) # factor=8 downsamples original imgs by 8x
         imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
         images = imgs
         images = images.astype(np.float32)
         if imgs_mask is not None:
             imgs_mask = np.moveaxis(imgs_mask, -1, 0).astype(np.float32)
     else:
-        poses, bds = _load_data(args, basedir, datadir_ratio, factor=factor, load_imgs=load_imgs)
+        poses, bds = _load_data(args, basedir, datadir_ratio, bd_factor, factor=factor, load_imgs=load_imgs)
 
-    print('Loaded', basedir, bds.min(), bds.max())
+    if isinstance(bds, list):
+        print('multiple bd_factors')
+        for b in bds:
+            print('Loaded', basedir, b.min(), b.max())
+    else:
+        print('Loaded', basedir, bds.min(), bds.max())
 
-    # Correct rotation matrix ordering and move variable dim to axis 0
-    poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
-    poses = np.moveaxis(poses, -1, 0).astype(np.float32)
-    bds = np.moveaxis(bds, -1, 0).astype(np.float32)
+    if isinstance(poses, list):
+        for idx,po in enumerate(poses):
+            # Correct rotation matrix ordering and move variable dim to axis 0
+            print('before concat po:',poses[idx].shape)
+            poses[idx] = np.concatenate([poses[idx][:, 1:2, :], -poses[idx][:, 0:1, :], poses[idx][:, 2:, :]], 1)
+            print('after concat po:',poses[idx].shape)
+            poses[idx] = np.moveaxis(poses[idx], -1, 0).astype(np.float32)
+            bds[idx] = np.moveaxis(bds[idx], -1, 0).astype(np.float32)
+
+            print('non-concat po:',poses[idx].shape)
+            print('non-concat po-bds:',bds[idx].shape)
+
+            # TODO double scale
+            # Rescale if bd_factor is provided
+            sc = 1. if bd_factor[idx] is None else 1./(bds[idx].min() * float(bd_factor[idx]))
+            print(sc)
+            print('po shape', poses[idx].shape)
+            poses[idx][:,:3,3] *= sc
+            bds[idx] *= sc
+        ## late merge here
+        
+        poses = np.concatenate(poses, axis=0)
+        print('concat pose:',poses.shape)
     
-    # Rescale if bd_factor is provided
-    sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
-    print(sc)
-    
-    poses[:,:3,3] *= sc
-    bds *= sc
+        bds = np.concatenate(bds, axis=0)
+        print('concat bds:',bds.shape)
+    else:
+        # Correct rotation matrix ordering and move variable dim to axis 0
+        print('before-concat poses:',poses.shape)
+        poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
+        print('after-concat poses:',poses.shape)
+        poses = np.moveaxis(poses, -1, 0).astype(np.float32)
+        bds = np.moveaxis(bds, -1, 0).astype(np.float32)
+        print('non-concat poses:',poses.shape)
+        print('non-concat bds:',bds.shape)
+        # TODO double scale
+        # Rescale if bd_factor is provided
+        sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
+        print(sc)
+        
+        poses[:,:3,3] *= sc
+        bds *= sc
 
     if recenter_dir is not None:
         if not isinstance(recenter_dir, list):
             recenter_dir = [recenter_dir]
-        poses_r, bds_r, _, _, _ = _load_data(args, recenter_dir, datadir_ratio, factor=factor, is_recenter=True) # factor=8 downsamples original imgs by 8x
-        
-        # Correct rotation matrix ordering and move variable dim to axis 0
-        poses_r = np.concatenate([poses_r[:, 1:2, :], -poses_r[:, 0:1, :], poses_r[:, 2:, :]], 1)
-        poses_r = np.moveaxis(poses_r, -1, 0).astype(np.float32)
-        bds_r = np.moveaxis(bds_r, -1, 0).astype(np.float32)
-        
-        # Rescale if bd_factor is provided
-        sc_r = 1. if args.bd_factor_recenter is None else 1./(bds_r.min() * args.bd_factor_recenter)
-        poses_r[:,:3,3] *= sc_r
+        poses_r, bds_r, _, _, _ = _load_data(args, recenter_dir, datadir_ratio, args.bd_factor_recenter, factor=factor, is_recenter=True) # factor=8 downsamples original imgs by 8x
+        print('recenter pose len:',len(poses_r))
+
+        if isinstance(poses_r, list):
+            for idx,po in enumerate(poses_r):
+                # Correct rotation matrix ordering and move variable dim to axis 0
+                poses_r[idx] = np.concatenate([poses_r[idx][:, 1:2, :], -poses_r[idx][:, 0:1, :], poses_r[idx][:, 2:, :]], 1)
+                poses_r[idx] = np.moveaxis(poses_r[idx], -1, 0).astype(np.float32)
+                bds_r[idx] = np.moveaxis(bds_r[idx], -1, 0).astype(np.float32)
+
+                # TODO double scale
+                # Rescale if bd_factor is provided
+                sc = 1. if args.bd_factor_recenter is None else 1./(bds_r[idx].min() * float(args.bd_factor_recenter[idx]))
+                print(sc)
+                
+                poses_r[idx][:,:3,3] *= sc
+                bds_r[idx] *= sc
+            ## late merge here
+            poses_r = np.concatenate(poses_r, axis=0)
+            bds_r = np.concatenate(bds_r, axis=0)
+        else:
+
+            # Correct rotation matrix ordering and move variable dim to axis 0
+            poses_r = np.concatenate([poses_r[:, 1:2, :], -poses_r[:, 0:1, :], poses_r[:, 2:, :]], 1)
+            poses_r = np.moveaxis(poses_r, -1, 0).astype(np.float32)
+            bds_r = np.moveaxis(bds_r, -1, 0).astype(np.float32)
+            
+            # Rescale if bd_factor is provided
+            if len(args.bd_factor_recenter) == 1:
+                    bdf_r = float(args.bd_factor_recenter[0])
+            sc_r = 1. if bdf_r is None else 1./(bds_r.min() * bdf_r)
+            poses_r[:,:3,3] *= sc_r
     else:
         None
 

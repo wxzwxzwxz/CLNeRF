@@ -10,7 +10,7 @@ from adapter import bottle_neck_adapter
 from expert import *
 
 # for LPIPS
-import lpips
+# import lpips
 
 # Misc
 img2mse = lambda x, y : torch.mean((x - y) ** 2)
@@ -24,8 +24,11 @@ mse2psnr_np = lambda x : -10. * np.log(x) / np.log(np.array([10.]))
 
 def compute_lpips(loss_fn, img0, img1):
     # Load images
-    img0 = lpips.im2tensor(img0).cuda() # RGB image from [-1,1]
-    img1 = lpips.im2tensor(img1).cuda()
+    img0 = torch.Tensor(((img0 - 0.5) * 2)[:, :, :, np.newaxis].transpose((3, 2, 0, 1))).cuda()
+    img1 = torch.Tensor(((img1 - 0.5) * 2)[:, :, :, np.newaxis].transpose((3, 2, 0, 1))).cuda()
+
+    # img0 = lpips.im2tensor(img0).cuda() # RGB image from [-1,1]
+    # img1 = lpips.im2tensor(img1).cuda()
 
     # Compute distance
     dist01 = loss_fn.forward(img0, img1)[0][0][0][0].cpu().numpy()
