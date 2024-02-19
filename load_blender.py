@@ -150,7 +150,13 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
                 all_paths.append(frame['file_path'] + ext)
 
                 if args.load_mask == True:
-                    fname_mask = os.path.join(args.load_mask_dir, frame['file_path'].replace('train', 'train_' + args.mask_ext).replace('test', 'test_' + args.mask_ext) + ext)
+                    if 'train' in frame['file_path']:
+                        fname_mask = os.path.join(args.load_mask_dir, frame['file_path'].replace('train', 'train_' + args.mask_ext) + ext)
+                    else:
+                        fname_mask = os.path.join(args.load_mask_dir, frame['file_path'].replace('test', 'test_' + args.mask_ext).replace('train', 'test') + ext)
+                    
+
+                    # fname_mask = os.path.join(args.load_mask_dir, frame['file_path'].replace('train', 'train_' + args.mask_ext).replace('test', 'test_' + args.mask_ext) + ext)
                     imgs_mask.append(imageio.imread(fname_mask))
 
             imgs = (np.array(imgs) / 255.).astype(np.float32) # keep all 4 channels (RGBA)

@@ -282,12 +282,16 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, args=None, \
             if render_mask_only:
                 # TODO: check!!!
                 if output_paths is not None:
-                    filename = os.path.join(savedir, output_paths[i].split('/')[-1])
+                    # filename = os.path.join(savedir, output_paths[i].split('/')[-1])
+                    filename = os.path.join(savedir, output_paths[i])
                 else:
                     filename = os.path.join(savedir, '{:04d}.png'.format(i))
                 
                 # cur_h, cur_w = rgb8.shape[:2]
                 # rgb8 = cv2.resize(rgb8, (int(cur_w*2), int(cur_h*2)))
+                print(savedir, output_paths[i], filename)
+                # ./logs/blendswap_whitehouse_origin_v20_near1_far30_20w_ts2/renderonly_mask0.1_ADD_train_near1_far30_v2_199999/train/
+                # ./logs/blendswap_whitehouse_origin_v20_near1_far30_20w_ts2/renderonly_mask0.1_ADD_train_near1_far30_199999/train
                 imageio.imwrite(filename, rgb8)
             else:
                 filename = os.path.join(savedir, '{:05d}.jpg'.format(i))
@@ -1377,8 +1381,11 @@ def config_parser():
     parser.add_argument("--bd_factor_recenter", type=float, default=0.75) 
     parser.add_argument("--bd_factor_teacher", type=float, default=0.75) 
 
-    # For evaluation
+    # for evaluation
     parser.add_argument("--use_lpips", action='store_true')
+
+    # for kd
+    parser.add_argument("--use_masked_sampling", action='store_true')
     
     return parser
 
@@ -1500,7 +1507,7 @@ def train():
                     images_mask = images_mask[..., :3]
                 
         print('Loaded blender', poses.shape, render_poses.shape, hwf, args.datadir)
-        print(args.w_mask_loss,args.w_loss_teacher)
+        print(args.w_mask_loss, args.w_loss_teacher)
         i_train, i_val, i_test = i_split
 
         if args.near:
@@ -1831,12 +1838,12 @@ def train():
             except:
                 psnr = 0
         else:
-            # if args.use_predict_mask:
-            #     img_loss = img2mse_withmask(rgb, target_s, extras['mask_map'])
-            #     psnr = mse2psnr(img_loss)
-            # else:
-            img_loss = img2mse(rgb, target_s)
-            psnr = mse2psnr(img_loss)
+            if args.use_masked_sampling:
+                img_loss = img2mse_withmask(rgb, target_s, target_s_mask)
+                psnr = mse2psnr(img_loss)
+            else:
+                img_loss = img2mse(rgb, target_s)
+                psnr = mse2psnr(img_loss)
         
         if args.use_mask_reg_loss:
             img_loss += torch.mean(torch.abs((1 - rgb))) * args.w_mask_reg_loss
@@ -1858,12 +1865,12 @@ def train():
                 except:
                     psnr0 = 0
             else:
-                # if args.use_predict_mask:
-                #     img_loss0 = img2mse_withmask(extras['rgb0'], target_s, extras['mask_map0'])
-                #     psnr0 = mse2psnr(img_loss0)
-                # else:
-                img_loss0 = img2mse(extras['rgb0'], target_s)
-                psnr0 = mse2psnr(img_loss0)
+                if args.use_masked_sampling:
+                    img_loss0 = img2mse_withmask(extras['rgb0'], target_s, target_s_mask)
+                    psnr = mse2psnr(img_loss0)
+                else:
+                    img_loss0 = img2mse(extras['rgb0'], target_s)
+                    psnr0 = mse2psnr(img_loss0)
             
             if args.use_mask_reg_loss:
                 img_loss0 += torch.mean(torch.abs((1 - extras['rgb0']))) * args.w_mask_reg_loss
@@ -1902,7 +1909,7 @@ def train():
                                                             stop_pdf_sampling= i - start < 0,
                                                             **render_kwargs_test_teacher)
 
-                    # rgb_gt = (1-rgb_mask) * rgb_teacher
+                    # rgb_gt = (1-rgb_mask) * rgb_teachers
                     
                 img_loss_teacher = img2mse_withmask(rgb_student, rgb_teacher, (1-extras_student['mask_map']))
                 loss += img_loss_teacher * args.w_loss_teacher
@@ -1953,12 +1960,22 @@ def train():
                                                             stop_pdf_sampling= i - start < 0,
                                                             **render_kwargs_test_teacher)
 
-                img_loss_teacher = img2mse(rgb_student, rgb_teacher)
-                loss += img_loss_teacher * args.w_loss_teacher
+                if args.use_masked_sampling:
+                    # img_loss = img2mse_withmask(rgb, target_s, target_s_mask)
+                    img_loss_teacher = img2mse_withmask(rgb_student, rgb_teacher, (1-target_s_mask))
+                    loss += img_loss_teacher * args.w_loss_teacher
 
-                if 'rgb0' in extras:
-                    img_loss0_teacher = img2mse(extras_student['rgb0'], rgb_teacher)
-                    loss += img_loss0_teacher * args.w_loss_teacher
+                    if 'rgb0' in extras:
+                        img_loss0_teacher = img2mse_withmask(extras_student['rgb0'], rgb_teacher, (1-target_s_mask))
+                        loss += img_loss0_teacher * args.w_loss_teacher
+                else:
+                    img_loss_teacher = img2mse(rgb_student, rgb_teacher)
+                    loss += img_loss_teacher * args.w_loss_teacher
+
+                    if 'rgb0' in extras:
+                        img_loss0_teacher = img2mse(extras_student['rgb0'], rgb_teacher)
+                        loss += img_loss0_teacher * args.w_loss_teacher
+
             else:
                 rgb_student, disp_student, acc_student, extras_student = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                                             verbose=i < 10, retraw=True,

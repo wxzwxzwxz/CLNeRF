@@ -281,6 +281,10 @@ class NeRF(nn.Module):
             # relu or not
             if self.args.use_expert_predict_mask_merge_relu:
                 h = F.relu(h)
+        elif self.args.lora:
+            if self.args.use_predict_mask and not self.args.use_expert_predict_mask:
+                mask = self.mask_linear(h)
+            h = F.relu(h)
         else:
             h = F.relu(h)
 

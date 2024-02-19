@@ -5,7 +5,7 @@ import numpy as np
 algo = sys.argv[1]
 iter = sys.argv[2]
 
-input_dir = os.path.join('logs_dp', algo)
+input_dir = os.path.join('logs', algo)
 
 test_list = ['renderonly_test_stage1_path_'+str(iter)]
 test_list += ['renderonly_test_stage1_bookshelf_'+str(iter)]
