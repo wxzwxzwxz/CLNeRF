@@ -8,11 +8,14 @@ Official PyTorch implementation for the paper "[CL-NeRF: Continual Learning of N
     ```
 
 ## Download Pre-trained Weights
- Download the pre-trained models from the drive and unzip them into the project's root directory for later testing. Refer to the directory structure example provided: Kitchen contains the pre-trained NeRF model, and Kitchen_ADD_clnerf is fine-tuned with new images following the ADD operation.:
+ Download the pre-trained models from the [drive](https://connecthkuhk-my.sharepoint.com/:f:/g/personal/xzwu_connect_hku_hk/Ek3F_1CIytxFt1PZkegpuSUBm9WelcO_DbVaWbfsu8FQIQ?e=FWh4zQ) and unzip them into the project's root directory for later testing. Refer to the directory structure example provided: Kitchen contains the pre-trained NeRF model, and Kitchen_ADD_clnerf is fine-tuned with new images following the ADD operation.:
 ```
 ├── logs 
 │   ├── Kitchen
+│   │   ├── 200000.tar
 │   ├── Kitchen_ADD_clnerf
+│   │   ├── 210000_expert.tar
+│   │   ├── 210000.tar
 │   ├── ...
 ```
 
