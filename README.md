@@ -1,5 +1,5 @@
 # CL-NeRF
-Official PyTorch implementation for the paper "[CL-NeRF: Continual Learning of Neural Radiance Fields for Evolving Scene Representation Video (NeurIPS 2023)](https://arxiv.org/pdf/2309.04814.pdf)".<br/>
+Official PyTorch implementation for the paper "[CL-NeRF: Continual Learning of Neural Radiance Fields for Evolving Scene Representation Video (NeurIPS 2023)](https://wxzwxzwxz.github.io/CL-NeRF/static/pdfs/2023_NeurIPS_CLNeRF.pdf)".<br/>
 
 ## Prerequisites
 - You can create the environment with:
