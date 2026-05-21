@@ -6,4 +6,4 @@
 *.npz
 *.dae
 data/*
-logs/*
+logs/*.DS_Store
