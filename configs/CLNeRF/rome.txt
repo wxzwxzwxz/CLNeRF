@@ -1,0 +1,40 @@
+basedir = ./logs
+dataset_type = blender
+
+no_batching = True
+
+use_viewdirs = True
+lrate_decay = 500
+
+i_img = 10000
+i_testset = 10000
+i_video = 100000
+
+N_samples = 64
+N_importance = 128
+N_rand = 1024
+
+precrop_iters = 500
+precrop_frac = 0.5
+
+ext = .png
+half_res = False
+render_factor = 8
+near = 1
+far = 30
+
+
+use_expert = True 
+use_predict_mask = True
+use_expert_predict_mask = True 
+use_expert_predict_mask_worelu = True 
+use_expert_predict_mask_merge_relu = True 
+use_lr_global_step_from_scratch = True
+
+use_maskloss_reg_loss = False
+
+w_mask_loss = 0.001
+w_loss_teacher = 0.01
+w_maskloss_reg_loss = 0
+
+trainskip = 1 

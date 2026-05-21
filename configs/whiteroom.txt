@@ -1,0 +1,26 @@
+basedir = ./logs
+dataset_type = blender
+
+no_batching = True
+
+use_viewdirs = True
+lrate_decay = 500
+
+i_img = 10000
+i_testset = 10000
+i_video = 100000
+
+N_samples = 64
+N_importance = 128
+N_rand = 1024
+
+precrop_iters = 500
+precrop_frac = 0.5
+
+ext = .jpg
+half_res = False
+render_factor = 8
+near = 0.1
+far = 10
+
+trainskip = 1
