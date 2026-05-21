@@ -1,4 +1,13 @@
-## Download
+# CL-NeRF
+Official PyTorch implementation for the paper "[CL-NeRF: Continual Learning of Neural Radiance Fields for Evolving Scene Representation Video (NeurIPS 2023)](https://wxzwxzwxz.github.io/CL-NeRF/static/pdfs/2023_NeurIPS_CLNeRF.pdf)".<br/>
+
+## Prerequisites
+- You can create the environment with:
+    ```
+    pip install -r requirements.txt
+    ```
+
+## Download Dataset
 Dataset:
 ```bash
 mkdir -p data
@@ -7,24 +16,20 @@ unzip data/kitchen_dataset.zip -d data/
 ```
 
 Expected dataset path:
-```text
-./data/Kitchen/
+
 ```
-
-## Install
-
-```bash
-conda create -n clnerf python=3.8 -y
-conda activate clnerf
-
-# Install PyTorch for your CUDA version first.
-# Example:
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-
-pip install -r requirements.txt
-pip install gdown PyMCubes lpips
+├── data 
+│   ├── Kitchen
+│   │   ├── original
+│   │   ├── sequential_operation
+│   │   ├── single_operation
+│   │   │   ├── ADD
+│   │   │   ├── DEL
+│   │   │   ├── MOV
+│   │   │   ├── REP
+│   ├── Whiteroom 
+│   ├── ...
 ```
-
 
 ## Train
 
@@ -67,4 +72,17 @@ bash experiments/extract_mesh.sh
 
 - Put the dataset under `./data/Kitchen/`.
 - Outputs are saved under `logs/<expname>/`.
+
+
+## Citation
+If you utilize the code, datasets, or concepts from our paper in your research, please kindly cite:
+```
+@article{wu2024cl,
+  title={CL-NeRF: Continual Learning of Neural Radiance Fields for Evolving Scene Representation},
+  author={Wu, Xiuzhe and Dai, Peng and Deng, Weipeng and Chen, Handi and Wu, Yang and Cao, Yan-Pei and Shan, Ying and Qi, Xiaojuan},
+  journal={Advances in Neural Information Processing Systems},
+  volume={36},
+  year={2024}
+}
+```
 
