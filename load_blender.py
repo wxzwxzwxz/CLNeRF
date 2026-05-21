@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import cv2
 from utils import load_features
 import random
+from tqdm import tqdm
 
 trans_t = lambda t : torch.Tensor([
     [1,0,0,0],
@@ -110,7 +111,7 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             json_file = transforms_test
         else:
             json_file = 'transforms_{}.json'.format(s)
-        
+            
         with open(os.path.join(basedir, json_file), 'r') as fp:
             metas[s] = json.load(fp)
 
@@ -140,10 +141,10 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
                 skip = 1
             else:
                 skip = testskip
-                
-            for frame in meta['frames'][::skip]:
+            
+            print('load '+ s +' images...' )
+            for frame in tqdm(meta['frames'][::skip]):
                 fname = os.path.join(basedir, frame['file_path'] + ext)
-                # print(fname)
                 imgs.append(imageio.imread(fname))
                 poses.append(np.array(frame['transform_matrix']))
                 # paths.append(frame['file_path'] + ext)
@@ -155,8 +156,6 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
                     else:
                         fname_mask = os.path.join(args.load_mask_dir, frame['file_path'].replace('test', 'test_' + args.mask_ext).replace('train', 'test') + ext)
                     
-
-                    # fname_mask = os.path.join(args.load_mask_dir, frame['file_path'].replace('train', 'train_' + args.mask_ext).replace('test', 'test_' + args.mask_ext) + ext)
                     imgs_mask.append(imageio.imread(fname_mask))
 
             imgs = (np.array(imgs) / 255.).astype(np.float32) # keep all 4 channels (RGBA)
@@ -169,8 +168,6 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
                 imgs_mask = (np.array(imgs_mask) / 255.).astype(np.float32) # keep all 4 channels (RGBA)
                 all_imgs_mask.append(imgs_mask)
 
-            # all_paths.append(paths)
-        
         i_split = [np.arange(counts[i], counts[i+1]) for i in range(3)]
         
         imgs = np.concatenate(all_imgs, 0)
@@ -218,24 +215,9 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             poses[:, :, :3] *= args.scene_scale
             render_poses[:, :, :3] *= args.scene_scale
 
-        if args.add_dino:
-            # dsid = args.dsid
-            # fts = load_features(vid=dsid, imhw=(height, width))
-            fts = load_features(os.path.join(args.datadir, 'train', 'dino.pt'), imhw=(H, W))
-            fns = [x.split('/')[-1] for x in all_paths[i_split[0]]]
-            fts_train = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
-
-            # fts = load_features(os.path.join(args.datadir, 'val', 'dino.pt'), imhw=(H, W))
-            # fns = [x.split('/')[-1] for x in all_paths[i_split[1]]]
-            # fts_val = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
-
-            fts = load_features(os.path.join(args.datadir, 'test', 'dino.pt'), imhw=(H, W))
-            fns = [x.split('/')[-1] for x in all_paths[i_split[2]]]
-            fts_test = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
-        else:
-            fts_train = None
-            fts_val = None
-            fts_test = None
+        fts_train = None
+        fts_val = None
+        fts_test = None
 
         return imgs, poses, render_poses, [H, W, focal], i_split, all_paths, ori_H, ori_W, fts_train, fts_test, imgs_mask
     else:
@@ -259,7 +241,6 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
                 all_paths.append(frame['file_path'] + ext)
 
             poses = np.array(poses).astype(np.float32)
-            # counts.append(counts[-1] + imgs.shape[0])
             counts.append(counts[-1] + poses.shape[0])
             all_poses.append(poses)
         
@@ -268,8 +249,7 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
         poses = np.concatenate(all_poses, 0)
         all_paths = np.array(all_paths)
         
-        # H, W = int(meta['h']), int(meta['w'])#ori_H, ori_W change 0523wp
-        H, W = ori_H, ori_W # int(meta['img_h']), int(meta['img_w'])
+        H, W = ori_H, ori_W 
         
         camera_angle_x = float(meta['camera_angle_x'])
         focal = .5 * W / np.tan(.5 * camera_angle_x)
@@ -282,15 +262,9 @@ def load_blender_data(args, basedir, half_res=False, testskip=1,
             focal = focal/2.
 
         if args.add_dino:
-            # dsid = args.dsid
-            # fts = load_features(vid=dsid, imhw=(height, width))
             fts = load_features(os.path.join(args.datadir, 'train', 'dino.pt'), imhw=(H, W))
             fns = [x.split('/')[-1] for x in all_paths[i_split[0]]]
             fts_train = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
-
-            # fts = load_features(os.path.join(args.datadir, 'val', 'dino.pt'), imhw=(H, W))
-            # fns = [x.split('/')[-1] for x in all_paths[i_split[1]]]
-            # fts_val = np.stack([fts[fn].permute(1,2,0).numpy() for fn in fns], axis=-1)
 
             fts = load_features(os.path.join(args.datadir, 'test', 'dino.pt'), imhw=(H, W))
             fns = [x.split('/')[-1] for x in all_paths[i_split[2]]]

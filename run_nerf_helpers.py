@@ -4,9 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-#for LoRA
-import loralib as lora
-from adapter import bottle_neck_adapter
 from expert import *
 
 # for LPIPS
@@ -22,13 +19,15 @@ to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
 img2mse_np = lambda x, y : np.mean((x - y) ** 2)
 mse2psnr_np = lambda x : -10. * np.log(x) / np.log(np.array([10.]))
 
+def binary_cross_entropy(x, y):
+  eps = 1e-12
+  loss = -torch.mean(y * torch.log(x + eps) + (1 - y) * torch.log(1 - x + eps))
+  return loss
+
 def compute_lpips(loss_fn, img0, img1):
     # Load images
     img0 = torch.Tensor(((img0 - 0.5) * 2)[:, :, :, np.newaxis].transpose((3, 2, 0, 1))).cuda()
     img1 = torch.Tensor(((img1 - 0.5) * 2)[:, :, :, np.newaxis].transpose((3, 2, 0, 1))).cuda()
-
-    # img0 = lpips.im2tensor(img0).cuda() # RGB image from [-1,1]
-    # img1 = lpips.im2tensor(img1).cuda()
 
     # Compute distance
     dist01 = loss_fn.forward(img0, img1)[0][0][0][0].cpu().numpy()
@@ -100,234 +99,109 @@ class NeRF(nn.Module):
         self.skips = skips
         self.use_viewdirs = use_viewdirs
         
-        if args.lora:
-            assert args.lora_layers is not None, 'when using LoRA, lora_layers must be set'
-            print("using LoRA")
-            rank=args.lora_rank
-            if 'pts_linears.0' in args.lora_layers:
-                inputs=[lora.Linear(input_ch, W,r=rank)]
-            else:
-                inputs=[nn.Linear(input_ch, W)]
-
-            middle_layers=[]
-            for i in range(1,D):
-                if i-1 not in self.skips:
-                    _in_ch=W
-                else:
-                    _in_ch=W + input_ch
-                if 'pts_linears.'+str(i) in args.lora_layers: #and 'pts_linears.'+str(i) != 'pts_linears.0':
-                    middle_layers.append(lora.Linear(_in_ch, W,r=rank))
-                else:
-                    middle_layers.append(nn.Linear(_in_ch, W))
-
-            self.pts_linears = nn.ModuleList(
-                inputs + middle_layers)
-        else:
-            self.pts_linears = nn.ModuleList(
-                [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
+        self.pts_linears = nn.ModuleList(
+            [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
             
-        if args.adapter_layers:
-            # self.adapters={}
-            adapters_list = []
-            for i in args.adapter_layers:
-                # if int(i)+1 in self.skips:
-                #     self.pts_linears.insert(int(i)+1,bottle_neck_adapter(out_dims=W + input_ch))
-                # if
-                # self.adapters[i] = bottle_neck_adapter()
-                adapters_list.append(bottle_neck_adapter(in_dims=256, out_dims=256, bottle_neck_dim=args.bottle_neck_dim))
-            
-            self.adapters = nn.ModuleList(adapters_list)
-            
-            #record the adapter layer for skip nonlinearity
-            # self.adapter_index=[]
-            # for i,layer in enumerate(self.pts_linears):
-            #     if 'adapter' in layer._get_name():
-            #         self.adapter_index.append(i)
-            # print('using adapter',self.adapters)
-
         if args.use_expert:
-            if args.expert_version == 'v1':
-                self.expert = expert(D=args.expert_d, W=args.expert_w, args=args)
-            elif args.expert_version == 'v2':
-                # d + 2
-                self.expert = expert_v2(D=args.expert_d, W=args.expert_w, input_dim=W, output_dim=W, args=args)
-            elif args.expert_version == 'v3':
-                # d + 2
-                self.expert = expert_v2(D=args.expert_d, W=args.expert_w, input_dim=input_ch, output_dim=W, args=args)
-            elif args.expert_version == 'v4':
-                self.expert = expert_v4(D=args.expert_d, W=args.expert_w, input_ch_views=self.input_ch_views, input_dim=input_ch, output_dim=W, args=args)
-
+            self.expert = expert_v2(D=args.expert_d, W=args.expert_w, input_dim=W, output_dim=W, args=args)
+             
         ### Implementation according to the official code release (https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py#L104-L105)
         self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
-
-        ### Implementation according to the paper
-        # self.views_linears = nn.ModuleList(
-        #     [nn.Linear(input_ch_views + W, W//2)] + [nn.Linear(W//2, W//2) for i in range(D//2)])
-        
         self.args = args
-        if self.args.add_dino:
-            self.emb_linear_penultimate = nn.Linear(W, W//2)
-
+        
         if use_viewdirs:
-            if args.lora and 'feature_linear' in args.lora_layers:
-                self.feature_linear = lora.Linear(W, W, r=rank)
-            else:
-                self.feature_linear = nn.Linear(W, W)
-
-            if args.lora and 'alpha_linear' in args.lora_layers:
-                self.alpha_linear = lora.Linear(W, 1, r=rank)
-            else:
-                self.alpha_linear = nn.Linear(W, 1)
-
-            if args.lora and 'rgb_linear' in args.lora_layers:
-                self.rgb_linear = lora.Linear(W//2, 3, r=rank)
-            else:
-                self.rgb_linear = nn.Linear(W//2, 3)
-
-            if self.args.add_dino:
-                pass
-                self.emb_linear = nn.Linear(W//2, 64)
-            
+            self.feature_linear = nn.Linear(W, W)
+            self.alpha_linear = nn.Linear(W, 1)
+            self.rgb_linear = nn.Linear(W//2, 3)
             if self.args.use_predict_mask and not self.args.use_expert_predict_mask:
                 self.mask_linear = nn.Linear(W, 1)
         else:
-            if args.lora and 'output_linear' in args.lora_layers:
-                self.output_linear = lora.Linear(W, output_ch, r=rank)
-            else:
-                if self.args.use_predict_mask and not self.args.use_expert_predict_mask:
-                    output_ch += 1
+            if self.args.use_predict_mask and not self.args.use_expert_predict_mask:
+                output_ch += 1
 
-                self.output_linear = nn.Linear(W, output_ch)
+            self.output_linear = nn.Linear(W, output_ch)
 
-    def forward(self, x, return_feat=False):
+    def forward(self, x, return_feat=False, index=None, prev_expert_list=None):
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
         h = input_pts
 
         h = self.pts_linears[0](h)
         h = F.relu(h)
-        if return_feat == True:
-            output_dict = dict()
-            output_dict['pts_linears_0'] = h
 
+        output_dict = dict()
         if self.args.use_expert:
-            if self.args.expert_version == 'v1' or self.args.expert_version == 'v2':
-                # expert_h = h
+            if self.args.use_teacher_nerf_with_branch and prev_expert_list is not None:
+                expert_h = list()
+                with torch.no_grad():
+                    for i in range(len(prev_expert_list)):
+                        expert_h.append(prev_expert_list[i](h))
+                expert_h.append(self.expert(h))
+            else:
                 expert_h = self.expert(h)
-            elif self.args.expert_version == 'v3':
-                expert_h = self.expert(input_pts)
-            elif self.args.expert_version == 'v4':
-                expert_h = self.expert(input_pts, input_views)
 
         for i in range(1, len(self.pts_linears)):
             h = self.pts_linears[i](h)
 
-            if self.args.adapter_layers is not None and str(i) in self.args.adapter_layers:
-                if self.args.adapter_version == 0:
-                    # new block, residual, best
-                    h = self.adapters[i](h)
-                elif self.args.adapter_version == 1:
-                    # new block v2, residual
-                    h = F.relu(h)
-                    h = self.adapters[i](h)
-                elif self.args.adapter_version == 2:
-                    # residual
-                    residual = self.adapters[i](h)
-                    h = h.add(residual)
-                elif self.args.adapter_version == 3:
-                    # residual v2
-                    h = F.relu(h)
-                    residual = self.adapters[i](h)
-                    h = h.add(residual)
-
             if i != len(self.pts_linears)-1:
                 h = F.relu(h)
-
-            if return_feat == True:
-                output_dict['pts_linears_'+str(i)] = h
 
             if i in self.skips:
                 h = torch.cat([input_pts, h], -1)
 
         if self.args.use_expert:
-            # relu or not
-            if not self.args.use_expert_predict_mask_merge_relu:
-                h = F.relu(h)
+            if self.args.use_teacher_nerf_with_branch and prev_expert_list is not None:
+                for i in range(len(expert_h)):
+                    # merge old_feat and new_feat
+                    if self.args.use_predict_mask:
+                        if self.args.use_expert_predict_mask:
+                            mask = expert_h[i][..., -1:]
+                            h = torch.sigmoid(mask) * expert_h[i][..., :-1] + h
+                    
+                    if i == len(expert_h) - 2:
+                        h_teacher = h
+                        h_teacher = F.relu(h_teacher)
+            else:
+                h_teacher = h
+                h_teacher = F.relu(h_teacher)
 
-            if self.args.use_predict_mask and not self.args.use_expert_predict_mask:
-                mask = self.mask_linear(h)
-
-            # merge old_feat and new_feat
-            if self.args.expert_version == 'v1' \
-                or self.args.expert_version == 'v2' \
-                or self.args.expert_version == 'v3':
-
+                # merge old_feat and new_feat
                 if self.args.use_predict_mask:
                     if self.args.use_expert_predict_mask:
                         mask = expert_h[..., -1:]
-                        if self.args.use_expert_featfusion == 'v1':
-                            h = mask * expert_h[..., :-1] + (1-mask) * h
-                        elif self.args.use_expert_featfusion == 'v2':
-                            h = mask * expert_h[..., :-1] + h
-                        # h = h - mask * expert_h[..., :-1]
-                    else:
-                        if self.args.use_expert_featfusion == 'v1':
-                            h = mask * expert_h + (1-mask) * h
-                        elif self.args.use_expert_featfusion == 'v2':
-                            h = mask * expert_h + h
-                        # h = h - mask * expert_h
-                else:
-                    h += expert_h
-            
+                        h = torch.sigmoid(mask) * expert_h[..., :-1] + h
+
             # relu or not
-            if self.args.use_expert_predict_mask_merge_relu:
-                h = F.relu(h)
-        elif self.args.lora:
-            if self.args.use_predict_mask and not self.args.use_expert_predict_mask:
-                mask = self.mask_linear(h)
             h = F.relu(h)
         else:
             h = F.relu(h)
 
-        if self.use_viewdirs:
-            alpha = self.alpha_linear(h)
-            feature = self.feature_linear(h)
+        alpha = self.alpha_linear(h)
+        feature = self.feature_linear(h)
 
-            if return_feat == True:
-                output_dict['alpha_linear'] = alpha
-                output_dict['feature_linear'] = feature
+        h = torch.cat([feature, input_views], -1)
+        for i, l in enumerate(self.views_linears):
+            h = self.views_linears[i](h)
+            h = F.relu(h)
 
-            h = torch.cat([feature, input_views], -1)
+
+        rgb = self.rgb_linear(h)
+        outputs = torch.cat([rgb, alpha], -1)
+        if self.args.use_predict_mask:
+            outputs = torch.cat([outputs, mask], -1)
         
-            for i, l in enumerate(self.views_linears):
-                h = self.views_linears[i](h)
-                h = F.relu(h)
 
-                if return_feat == True:
-                    output_dict['views_linears_'+str(i)] = h
+        if self.args.use_expert:
+            with torch.no_grad():
+                alpha = self.alpha_linear(h_teacher)
+                feature = self.feature_linear(h_teacher)
 
-            rgb = self.rgb_linear(h)
-            if self.args.add_dino:
-                pass
-                # h = self.emb_linear_penultimate(feature)
-                # ft = self.emb_linear(h)
-                outputs = torch.cat([rgb, alpha, ft], -1)
-            else:
-                outputs = torch.cat([rgb, alpha], -1)
-
-            if self.args.use_expert:
-                if self.args.expert_version == 'v4':
-                    raise NotImplemented
-                    # if self.args.use_predict_mask:
-                    #     outputs = mask * expert_h + (1-mask) * outputs
-                    # else:
-                    #     outputs = outputs + expert_h
-
-            if self.args.use_predict_mask:
-                # mask = self.mask_linear(h)
-                outputs = torch.cat([outputs, mask], -1)
-        else:
-            outputs = self.output_linear(h)
-
+                h = torch.cat([feature, input_views], -1)
+                for i, l in enumerate(self.views_linears):
+                    h = self.views_linears[i](h)
+                    h = F.relu(h)
+                rgb = self.rgb_linear(h)
+                output_dict['outputs_teacher'] = torch.cat([rgb, alpha], -1)
+            
         if return_feat == True:
             return outputs, output_dict
         else:
@@ -466,8 +340,6 @@ def sample_rays(args, hwf, K, i, i_train, N_rand, poses, start, use_batching=Fal
     else:
         # Random from one image
         img_i = np.random.choice(i_train)
-        # target = images[img_i]
-        # target = torch.Tensor(target).to(device)
         pose = poses[img_i, :3,:4]
 
         if N_rand is not None:
@@ -492,6 +364,5 @@ def sample_rays(args, hwf, K, i, i_train, N_rand, poses, start, use_batching=Fal
             rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
             rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
             batch_rays = torch.stack([rays_o, rays_d], 0)
-            # target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-
+            
     return batch_rays
